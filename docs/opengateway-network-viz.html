@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenGateway Network Visualization</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+            color: #fff;
+            overflow-x: hidden;
+        }
+
+        .header {
+            text-align: center;
+            padding: 2rem;
+            background: rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(10px);
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header p {
+            color: #aaa;
+            font-size: 1.1rem;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .controls {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 600;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        #canvas-container {
+            position: relative;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 600px;
+        }
+
+        .legend {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-top: 2rem;
+            padding: 1.5rem;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 12px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .legend-color {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        .info-panel {
+            margin-top: 2rem;
+            padding: 2rem;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 12px;
+            border-left: 4px solid #667eea;
+        }
+
+        .info-panel h3 {
+            margin-bottom: 1rem;
+            color: #667eea;
+        }
+
+        .info-panel p {
+            line-height: 1.6;
+            color: #ccc;
+            margin-bottom: 0.5rem;
+        }
+
+        .status {
+            text-align: center;
+            padding: 1rem;
+            background: rgba(102, 126, 234, 0.1);
+            border-radius: 8px;
+            margin-top: 1rem;
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .highlight {
+            color: #667eea;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🌐 OpenGateway Network</h1>
+        <p>Local → nearest nodes → country nodes work hand in hand; request distributed as the search expands until enough capacity</p>
+    </div>
+
+    <div class="container">
+        <div class="controls">
+            <button class="btn" onclick="simulateLocalRequest()">🏠 Local Request</button>
+            <button class="btn" onclick="simulateNearbyRequest()">📍 Nearby Request</button>
+            <button class="btn" onclick="simulateRegionalRequest()">🌆 Regional Request</button>
+            <button class="btn" onclick="simulateGlobalRequest()">🌍 Global Request</button>
+            <button class="btn" onclick="resetVisualization()">🔄 Reset</button>
+        </div>
+
+        <div id="canvas-container">
+            <canvas id="network-canvas"></canvas>
+        </div>
+
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-color" style="background: #00d4ff;"></div>
+                <span>Your Node (Philippines)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #50fa7b;"></div>
+                <span>Nearby Nodes (&lt;50ms)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #ffb86c;"></div>
+                <span>Regional Nodes (&lt;150ms)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #ff79c6;"></div>
+                <span>Global Nodes (150ms+)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #bd93f9;"></div>
+                <span>Active Connection (distributed to multiple nodes)</span>
+            </div>
+        </div>
+
+        <div class="status" id="status">
+            Click a button above to simulate a request
+        </div>
+
+        <div class="info-panel">
+            <h3>Geographic Intelligence: How Routing Works</h3>
+            <p>It goes <span class="highlight">local → nearest nodes → country nodes</span> (and keeps expanding). <strong>They work hand in hand:</strong> the request is <strong>distributed</strong> to them as the search expands until there is <strong>enough capacity</strong> to process it.</p>
+            <p><span class="highlight">Local:</span> Your PC is part of the pool—contributes if it can.</p>
+            <p><span class="highlight">Nearest nodes:</span> Add neighbors (&lt;50ms); local + nearest work together; distribute the request.</p>
+            <p><span class="highlight">Country nodes:</span> Expand to city/region (&lt;150ms); local + nearest + country work hand in hand; distribute across the set.</p>
+            <p><span class="highlight">Global:</span> Keep expanding worldwide until enough nodes; distribute across all. No capacity → queue.</p>
+            <p style="margin-top: 1rem; font-style: italic;">Local, nearest, and country nodes work hand in hand—the request is distributed across the expanding set until there’s enough capacity.</p>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('network-canvas');
+        const ctx = canvas.getContext('2d');
+        const statusEl = document.getElementById('status');
+
+        // Set canvas size
+        function resizeCanvas() {
+            const container = canvas.parentElement;
+            canvas.width = container.offsetWidth;
+            canvas.height = 600;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        // Node class
+        class Node {
+            constructor(x, y, label, type, latency) {
+                this.x = x;
+                this.y = y;
+                this.label = label;
+                this.type = type; // 'user', 'nearby', 'regional', 'global'
+                this.latency = latency;
+                this.active = false;
+                this.radius = 8;
+                this.pulseRadius = 0;
+            }
+
+            draw() {
+                const colors = {
+                    user: '#00d4ff',
+                    nearby: '#50fa7b',
+                    regional: '#ffb86c',
+                    global: '#ff79c6'
+                };
+
+                // Draw glow effect when active
+                if (this.active) {
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.radius + this.pulseRadius, 0, Math.PI * 2);
+                    ctx.fillStyle = colors[this.type] + '40';
+                    ctx.fill();
+                }
+
+                // Draw main node
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = this.active ? colors[this.type] : colors[this.type] + '80';
+                ctx.fill();
+                ctx.strokeStyle = this.active ? '#fff' : colors[this.type];
+                ctx.lineWidth = this.active ? 3 : 2;
+                ctx.stroke();
+
+                // Draw label
+                ctx.fillStyle = '#fff';
+                ctx.font = '12px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(this.label, this.x, this.y - 15);
+                
+                if (this.latency) {
+                    ctx.fillStyle = '#aaa';
+                    ctx.font = '10px sans-serif';
+                    ctx.fillText(`${this.latency}ms`, this.x, this.y + 25);
+                }
+            }
+
+            update() {
+                if (this.active) {
+                    this.pulseRadius += 0.5;
+                    if (this.pulseRadius > 20) {
+                        this.pulseRadius = 0;
+                    }
+                }
+            }
+        }
+
+        // Create network nodes
+        const nodes = [
+            // User node (Philippines)
+            new Node(canvas.width / 2, canvas.height / 2, 'Your Node', 'user', '0'),
+            
+            // Nearby nodes (same village/city)
+            new Node(canvas.width / 2 - 100, canvas.height / 2 - 80, 'Neighbor 1', 'nearby', '20'),
+            new Node(canvas.width / 2 + 100, canvas.height / 2 - 80, 'Neighbor 2', 'nearby', '25'),
+            new Node(canvas.width / 2 - 80, canvas.height / 2 + 90, 'Neighbor 3', 'nearby', '35'),
+            
+            // Regional nodes (Manila, other cities)
+            new Node(canvas.width / 2 - 200, canvas.height / 2 - 150, 'Manila Node', 'regional', '50'),
+            new Node(canvas.width / 2 + 200, canvas.height / 2 - 130, 'Cebu Node', 'regional', '80'),
+            new Node(canvas.width / 2 - 180, canvas.height / 2 + 150, 'Davao Node', 'regional', '120'),
+            
+            // Global nodes
+            new Node(100, 100, 'Singapore', 'global', '80'),
+            new Node(canvas.width - 100, 120, 'Tokyo', 'global', '150'),
+            new Node(150, canvas.height - 80, 'Sydney', 'global', '200'),
+            new Node(canvas.width - 120, canvas.height - 100, 'San Francisco', 'global', '250'),
+        ];
+
+        let activeConnections = [];
+        let animationId = null;
+
+        function drawConnection(from, to, progress) {
+            const gradient = ctx.createLinearGradient(from.x, from.y, to.x, to.y);
+            gradient.addColorStop(0, '#bd93f9');
+            gradient.addColorStop(1, '#bd93f9' + '40');
+
+            ctx.beginPath();
+            ctx.moveTo(from.x, from.y);
+            
+            // Calculate intermediate point for animation
+            const currentX = from.x + (to.x - from.x) * progress;
+            const currentY = from.y + (to.y - from.y) * progress;
+            
+            ctx.lineTo(currentX, currentY);
+            ctx.strokeStyle = gradient;
+            ctx.lineWidth = 3;
+            ctx.stroke();
+
+            // Draw moving particle
+            if (progress < 1) {
+                ctx.beginPath();
+                ctx.arc(currentX, currentY, 5, 0, Math.PI * 2);
+                ctx.fillStyle = '#fff';
+                ctx.fill();
+            }
+        }
+
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw connections
+            activeConnections.forEach(conn => {
+                conn.progress += 0.02;
+                if (conn.progress <= 1) {
+                    drawConnection(conn.from, conn.to, conn.progress);
+                }
+            });
+
+            // Update and draw nodes
+            nodes.forEach(node => {
+                node.update();
+                node.draw();
+            });
+
+            animationId = requestAnimationFrame(animate);
+        }
+
+        function resetVisualization() {
+            nodes.forEach(node => node.active = false);
+            activeConnections = [];
+            statusEl.textContent = 'Network reset. Click a button to see requests distributed to multiple nearest nodes (expand until enough capacity).';
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            nodes.forEach(node => node.draw());
+        }
+
+        function simulateLocalRequest() {
+            resetVisualization();
+            const userNode = nodes[0];
+            userNode.active = true;
+            statusEl.innerHTML = '✅ <span class="highlight">Local Request:</span> Processed on your own node. Latency: <span class="highlight">0ms</span> | Model: 7B';
+            animate();
+        }
+
+        function simulateNearbyRequest() {
+            resetVisualization();
+            const userNode = nodes[0];
+            const nearby1 = nodes[1]; // Neighbor 1
+            const nearby2 = nodes[2]; // Neighbor 2
+
+            userNode.active = true;
+            nearby1.active = true;
+            nearby2.active = true;
+
+            activeConnections.push({ from: userNode, to: nearby1, progress: 0 });
+            activeConnections.push({ from: userNode, to: nearby2, progress: 0.15 });
+
+            statusEl.innerHTML = '✅ <span class="highlight">Nearby Request:</span> Distributed to <strong>multiple nearest</strong> nodes (Neighbor 1, Neighbor 2). Enough capacity → process. Latency: <span class="highlight">~20–25ms</span> | Model: 13B';
+            animate();
+        }
+
+        function simulateRegionalRequest() {
+            resetVisualization();
+            const userNode = nodes[0];
+            const manila = nodes[4];   // Manila Node
+            const cebu = nodes[5];     // Cebu Node
+
+            userNode.active = true;
+            manila.active = true;
+            cebu.active = true;
+
+            activeConnections.push({ from: userNode, to: manila, progress: 0 });
+            activeConnections.push({ from: userNode, to: cebu, progress: 0.12 });
+
+            statusEl.innerHTML = '✅ <span class="highlight">Regional Request:</span> Expanded to regional; distributed to <strong>multiple</strong> nearest (Manila, Cebu). Enough capacity → process. Latency: <span class="highlight">~50–80ms</span> | Model: 70B';
+            animate();
+        }
+
+        function simulateGlobalRequest() {
+            resetVisualization();
+            const userNode = nodes[0];
+            const singapore = nodes[7];  // Singapore
+            const tokyo = nodes[8];      // Tokyo
+
+            userNode.active = true;
+            singapore.active = true;
+            tokyo.active = true;
+
+            activeConnections.push({ from: userNode, to: singapore, progress: 0 });
+            activeConnections.push({ from: userNode, to: tokyo, progress: 0.1 });
+
+            statusEl.innerHTML = '✅ <span class="highlight">Global Request:</span> Expanded to global; distributed to <strong>multiple</strong> capable nodes (Singapore, Tokyo). Enough capacity → process. Latency: <span class="highlight">~80–150ms</span> | Rare model';
+            animate();
+        }
+
+        // Initial draw
+        nodes.forEach(node => node.draw());
+    </script>
+</body>
+</html>
