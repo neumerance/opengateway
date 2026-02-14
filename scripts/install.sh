@@ -63,7 +63,7 @@ install_python_linux() {
   if ensure_asdf; then
     source_asdf
     asdf plugin add python 2>/dev/null || true
-    asdf install python 3.12.0 2>/dev/null || asdf install python 3.11.0 2>/dev/null || asdf install python 3.10.0 2>/dev/null || return 1
+    asdf install python 3.12.0 2>/dev/null || asdf install python 3.11.0 2>/dev/null || asdf install python 3.10.0 2>/dev/null || true
     PY_INSTALLED=$(asdf list python 2>/dev/null | grep -E '^  3\.(1[0-2]|[0-9]+)' | tail -1 | xargs)
     [[ -z "$PY_INSTALLED" ]] && PY_INSTALLED=$(asdf list python 2>/dev/null | tail -1 | xargs)
     asdf global python "${PY_INSTALLED:-3.12.0}" 2>/dev/null || true
