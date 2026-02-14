@@ -158,18 +158,24 @@ add_path_to_shell "$PROFILE_HOME/.profile"
 add_path_to_shell "$PROFILE_HOME/.bashrc"
 [[ -f "$PROFILE_HOME/.zshrc" ]] && add_path_to_shell "$PROFILE_HOME/.zshrc"
 
-# Optional: also install wrapper into ~/.local/bin (fails silently if no write)
+# Optional: install wrapper into ~/.local/bin so "opengateway" is on PATH
 BIN_DIR="${OPENGATEWAY_BIN_DIR:-${HOME:-/root}/.local/bin}"
-if mkdir -p "$BIN_DIR" 2>/dev/null; then
+mkdir -p "$BIN_DIR" 2>/dev/null || true
+if [[ -d "$BIN_DIR" && -w "$BIN_DIR" ]]; then
   cat > "$BIN_DIR/opengateway" << BINWRAP
 #!/usr/bin/env bash
 export OPENGATEWAY_POC_ROOT="$OPENGATEWAY_POC_ROOT"
 exec node "$OPENGATEWAY_POC_ROOT/cli.js" "\$@"
 BINWRAP
-  chmod +x "$BIN_DIR/opengateway" 2>/dev/null && echo "  OK: CLI also in $BIN_DIR/opengateway"
-  if ! grep -qF "$BIN_DIR" "$PROFILE_HOME/.profile" 2>/dev/null; then
-    echo "export PATH=\"$BIN_DIR:\$PATH\"" >> "$PROFILE_HOME/.profile"
+  chmod +x "$BIN_DIR/opengateway" 2>/dev/null || true
+  if [[ -x "$BIN_DIR/opengateway" ]]; then
+    echo "  OK: CLI in $BIN_DIR/opengateway"
+    if ! grep -qF "$BIN_DIR" "$PROFILE_HOME/.profile" 2>/dev/null; then
+      echo "export PATH=\"$BIN_DIR:\$PATH\"" >> "$PROFILE_HOME/.profile"
+    fi
   fi
+else
+  echo "  Note: could not write to $BIN_DIR (missing or not writable)"
 fi
 
 echo ""
@@ -216,6 +222,10 @@ echo "  To join cluster: $OPENGATEWAY_POC_ROOT/opengateway connect <cluster-id> 
 echo "  Then start node: $OPENGATEWAY_POC_ROOT/node-run.sh   (or: opengateway start)"
 
 echo ""
-echo "Phase 1–3 complete. Run ./node-run.sh or 'opengateway start' to join the cluster and stay discoverable."
+if [[ -x "$OPENGATEWAY_POC_ROOT/opengateway" ]]; then
+  echo "Phase 1–3 complete. Run ./node-run.sh or 'opengateway start' to join the cluster and stay discoverable."
+else
+  echo "WARN: $OPENGATEWAY_POC_ROOT/opengateway missing or not executable. Install may have failed earlier (e.g. Node step); check output above."
+fi
 echo "  POC root: $OPENGATEWAY_POC_ROOT"
 echo ""
