@@ -61,6 +61,19 @@ function getResources() {
   return readJson(RESOURCES_PATH, null);
 }
 
+function getEligibleTierIds(resources) {
+  if (!resources) return [];
+  const cpu = resources.cpu_cores ?? resources.cpu ?? 0;
+  const ram = resources.ram_gb ?? resources.ram ?? 0;
+  const gpu = resources.gpu_vram_gb ?? resources.gpu ?? 0;
+  const disk = resources.disk_gb ?? resources.disk ?? 0;
+  return TIERS.filter((t) => {
+    if (cpu < t.cpu || ram < t.ram || disk < t.disk) return false;
+    if (t.gpu > 0 && gpu < t.gpu) return false;
+    return true;
+  }).map((t) => t.id);
+}
+
 function cmdGauge() {
   if (process.platform !== 'linux') {
     console.error('Gauge is Linux-only for this POC.');
@@ -117,6 +130,9 @@ function cmdStatus() {
   console.log('Cluster ID:  ', config.cluster_id || '(none)');
   console.log('Node name:   ', config.node_name || '(auto)');
   console.log('Clusters:    ', state.clusters.length ? state.clusters.map(c => c.id).join(', ') : 'none');
+  if (state.supportedModels && state.supportedModels.length) {
+    console.log('Models:      ', state.supportedModels.join(', '));
+  }
 }
 
 function cmdClusters() {
@@ -176,20 +192,12 @@ function cmdEligible() {
     console.log('Resources not gauged. Run: opengateway gauge');
     return;
   }
-  const cpu = r.cpu_cores ?? r.cpu ?? 0;
-  const ram = r.ram_gb ?? r.ram ?? 0;
-  const gpu = r.gpu_vram_gb ?? r.gpu ?? 0;
-  const disk = r.disk_gb ?? r.disk ?? 0;
-  const eligible = TIERS.filter(t => {
-    if (cpu < t.cpu || ram < t.ram || disk < t.disk) return false;
-    if (t.gpu > 0 && gpu < t.gpu) return false;
-    return true;
-  });
+  const eligible = getEligibleTierIds(r);
   if (eligible.length === 0) {
     console.log('No clusters eligible with current resources.');
     return;
   }
-  eligible.forEach(t => console.log(t.id));
+  eligible.forEach((id) => console.log(id));
 }
 
 function cmdPeers(clusterId) {
@@ -224,10 +232,24 @@ function cmdStart() {
   if (!state.clusters.some(c => c.id === clusterId)) {
     setState({ clusters: state.clusters.concat([{ id: clusterId }]) });
   }
+  // Always refresh resources and model eligibility before starting the node.
+  cmdGauge();
+  const eligible = getEligibleTierIds(getResources());
+  setState({ supportedModels: eligible });
+  if (eligible.length === 0) {
+    console.log('Eligible models: none');
+  } else {
+    console.log('Eligible models:', eligible.join(', '));
+  }
   console.log('Starting node for cluster:', clusterId);
   const { spawn } = require('child_process');
   const child = spawn(runScript, [], {
-    env: { ...process.env, OPENGATEWAY_POC_ROOT: POC_ROOT, POC_CLUSTER_ID: clusterId },
+    env: {
+      ...process.env,
+      OPENGATEWAY_POC_ROOT: POC_ROOT,
+      POC_CLUSTER_ID: clusterId,
+      POC_SUPPORTED_MODELS: eligible.join(','),
+    },
     stdio: 'inherit',
     cwd: POC_ROOT,
   });
@@ -238,18 +260,52 @@ function cmdStart() {
   });
 }
 
+function cmdStop() {
+  const state = getState();
+  if (!state.nodePid) {
+    console.log('Node is not running.');
+    return;
+  }
+  try {
+    process.kill(state.nodePid, 'SIGTERM');
+    setState({ nodePid: null });
+    console.log('Stopped node (pid ' + state.nodePid + ').');
+  } catch (_) {
+    // Stale PID or already stopped
+    setState({ nodePid: null });
+    console.log('Node process not found. Cleared stale pid.');
+  }
+}
+
+function cmdRestart() {
+  cmdStop();
+  cmdStart();
+}
+
 function cmdPrompt(...args) {
   const sendPath = path.join(POC_ROOT, 'send-prompt.js');
   if (!fs.existsSync(sendPath)) {
     console.error('send-prompt.js not found. Run install.sh Phase 3 first.');
     process.exit(1);
   }
-  const promptText = args.length ? args.join(' ') : (process.env.POC_PROMPT || 'What is 2+2?');
+  let model = '';
+  const parts = [];
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] === '--model' && args[i + 1]) {
+      model = args[i + 1];
+      i += 1;
+      continue;
+    }
+    parts.push(args[i]);
+  }
+  const promptText = parts.length ? parts.join(' ') : (process.env.POC_PROMPT || 'What is 2+2?');
   const state = getState();
   const clusterId = getConfig().cluster_id || (state.clusters[0] && state.clusters[0].id) || 'gatewayai-poc';
   const { spawnSync } = require('child_process');
-  const r = spawnSync(process.execPath, [sendPath, promptText], {
-    env: { ...process.env, OPENGATEWAY_POC_ROOT: POC_ROOT, POC_CLUSTER_ID: clusterId },
+  const sendArgs = [sendPath, promptText];
+  if (model) sendArgs.push(model);
+  const r = spawnSync(process.execPath, sendArgs, {
+    env: { ...process.env, OPENGATEWAY_POC_ROOT: POC_ROOT, POC_CLUSTER_ID: clusterId, POC_MODEL: model || '' },
     cwd: POC_ROOT,
     stdio: 'inherit',
   });
@@ -268,6 +324,8 @@ const COMMANDS = {
   peers: cmdPeers,
   gauge: cmdGauge,
   start: cmdStart,
+  stop: cmdStop,
+  restart: cmdRestart,
   prompt: cmdPrompt,
 };
 
@@ -276,7 +334,8 @@ function main() {
   const fn = cmd && COMMANDS[cmd];
   if (!fn) {
     console.error('Usage: opengateway <command> [args]');
-    console.error('Commands: status, clusters, connect, disconnect, resources, eligible, peers, gauge, start, prompt');
+    console.error('Commands: status, clusters, connect, disconnect, resources, eligible, peers, gauge, start, stop, restart, prompt');
+    console.error('Prompt usage: opengateway prompt \"text\" [--model <model-id>]');
     console.error('Aliases:  join = connect, leave = disconnect');
     process.exit(1);
   }

@@ -19,6 +19,7 @@ const CLUSTER_ID = process.env.POC_CLUSTER_ID || (() => {
 })();
 
 const prompt = process.argv[2] || process.env.POC_PROMPT || 'What is 2+2?';
+const model = process.argv[3] || process.env.POC_MODEL || '';
 const request_id = crypto.randomUUID();
 
 const topic = crypto.createHash('sha256').update(CLUSTER_ID).digest();
@@ -40,7 +41,9 @@ async function main() {
     swarm.on('connection', (socket, info) => {
       let buf = '';
       socket.setEncoding('utf8');
-      send(socket, { type: 'inference_request', request_id, prompt });
+      const req = { type: 'inference_request', request_id, prompt };
+      if (model) req.model = model;
+      send(socket, req);
       socket.on('data', (chunk) => {
         buf += chunk;
         const lines = buf.split('\n');

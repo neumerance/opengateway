@@ -330,6 +330,18 @@ Output: the response (e.g. `What is 2+2?` or `4` if you use an echo server).
 | `POC_SERVE` | `0` | Set `1` so this node answers prompts (echo) |
 | `POC_PROMPT` | — | If set, send this prompt and print response then exit |
 | `OPENGATEWAY_POC_ROOT` | `~/.opengateway-poc` | Install and config directory |
+| `POC_INFERENCE_BACKEND` | `auto` | `auto` (try Ollama then echo), `ollama` (require Ollama), or `echo`. |
+| `OLLAMA_URL` | `http://127.0.0.1:11434` | Local Ollama base URL used by `poc-node.js`. |
+| `OLLAMA_MODEL` | `llama3.2:1b` | Ollama model name for real inference. |
+
+To run a real local model response in POC mode, install/start Ollama on the serving node and pull a model:
+
+```bash
+ollama serve
+ollama pull llama3.2:1b
+```
+
+Then start the node with `POC_INFERENCE_BACKEND=ollama` (strict) or leave default `auto` (falls back to echo if Ollama is unavailable).
 
 **Same machine (three terminals):** Run NodeA in terminal 1, NodeB in terminal 2, then NodeC in terminal 3. Use the same `POC_CLUSTER_ID` (default is fine).
 

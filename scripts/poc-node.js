@@ -9,6 +9,8 @@
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
+const https = require('https');
 
 const POC_ROOT = process.env.OPENGATEWAY_POC_ROOT || path.join(process.env.HOME || '', '.opengateway-poc');
 const CLUSTER_ID = process.env.POC_CLUSTER_ID || (() => {
@@ -24,6 +26,13 @@ const CLUSTER_ID = process.env.POC_CLUSTER_ID || (() => {
 })();
 
 const NODE_NAME = process.env.NODE_NAME || 'node';
+const POC_INFERENCE_BACKEND = (process.env.POC_INFERENCE_BACKEND || 'auto').toLowerCase(); // auto | ollama | echo
+const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2:1b';
+const SUPPORTED_MODELS = (process.env.POC_SUPPORTED_MODELS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 const topic = crypto.createHash('sha256').update(CLUSTER_ID).digest();
 
@@ -31,6 +40,107 @@ function send(socket, obj) {
   try {
     socket.write(JSON.stringify(obj) + '\n');
   } catch (_) {}
+}
+
+function postJson(urlString, body, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    let url;
+    try {
+      url = new URL(urlString);
+    } catch (e) {
+      reject(e);
+      return;
+    }
+    const payload = JSON.stringify(body);
+    const client = url.protocol === 'https:' ? https : http;
+    const req = client.request({
+      hostname: url.hostname,
+      port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      path: url.pathname + url.search,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+      },
+      timeout: timeoutMs,
+    }, (res) => {
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          reject(new Error(`HTTP ${res.statusCode}: ${data}`));
+          return;
+        }
+        try {
+          resolve(JSON.parse(data));
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('request timeout')));
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
+async function inferWithOllama(prompt, model) {
+  const body = {
+    model: model || OLLAMA_MODEL,
+    prompt: String(prompt),
+    stream: false,
+  };
+  const out = await postJson(`${OLLAMA_URL}/api/generate`, body, 45000);
+  if (!out || typeof out.response !== 'string') {
+    throw new Error('Ollama returned no response');
+  }
+  return out.response.trim();
+}
+
+async function inferPrompt(prompt, model) {
+  const requestedModel = model ? String(model) : '';
+  if (SUPPORTED_MODELS.length > 0 && requestedModel && !SUPPORTED_MODELS.includes(requestedModel)) {
+    throw new Error(`model "${requestedModel}" not supported by this node (supported: ${SUPPORTED_MODELS.join(', ')})`);
+  }
+  const chosenModel = requestedModel || OLLAMA_MODEL;
+  if (POC_INFERENCE_BACKEND === 'echo') {
+    return { text: '[echo] ' + String(prompt), backend: 'echo' };
+  }
+  if (POC_INFERENCE_BACKEND === 'ollama') {
+    const text = await inferWithOllama(prompt, chosenModel);
+    return { text, backend: 'ollama' };
+  }
+  // auto mode: try Ollama, fall back to echo
+  try {
+    const text = await inferWithOllama(prompt, chosenModel);
+    return { text, backend: 'ollama' };
+  } catch (_) {
+    return { text: '[echo] ' + String(prompt), backend: 'echo' };
+  }
+}
+
+function handleInferenceRequest(msg, socket) {
+  const requestId = msg.request_id != null ? msg.request_id : crypto.randomUUID();
+  inferPrompt(msg.prompt, msg.model)
+    .then(({ text, backend }) => {
+      send(socket, {
+        type: 'inference_response',
+        request_id: requestId,
+        response: text,
+        model: msg.model || OLLAMA_MODEL,
+      });
+      console.log('[request]', requestId, '->', backend);
+    })
+    .catch((err) => {
+      send(socket, {
+        type: 'inference_response',
+        request_id: requestId,
+        response: `[error] ${err.message || String(err)}`,
+      });
+      console.error('[request]', requestId, '-> error', err.message || err);
+    });
 }
 
 function setupConnection(socket, info) {
@@ -47,13 +157,7 @@ function setupConnection(socket, info) {
       try {
         const msg = JSON.parse(line);
         if (msg.type === 'inference_request' && msg.request_id != null && msg.prompt != null) {
-          const response = {
-            type: 'inference_response',
-            request_id: msg.request_id,
-            response: '[echo] ' + String(msg.prompt),
-          };
-          send(socket, response);
-          console.log('[request]', msg.request_id, '-> echo');
+          handleInferenceRequest(msg, socket);
         }
       } catch (_) {}
     }
@@ -71,6 +175,10 @@ async function main() {
   const discovery = swarm.join(topic, { server: true, client: true });
   await discovery.flushed();
   console.log('Joined cluster:', CLUSTER_ID, '(' + NODE_NAME + ')');
+  console.log('Inference backend:', POC_INFERENCE_BACKEND, `(ollama=${OLLAMA_URL}, model=${OLLAMA_MODEL})`);
+  if (SUPPORTED_MODELS.length > 0) {
+    console.log('Supported models:', SUPPORTED_MODELS.join(', '));
+  }
 
   const shutdown = () => {
     discovery.destroy().then(() => process.exit(0)).catch(() => process.exit(0));
