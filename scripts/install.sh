@@ -140,8 +140,14 @@ if [[ ! -f "$OPENGATEWAY_POC_ROOT/state.json" ]]; then
 fi
 
 # Install CLI to machine bin path and add to PATH
-BIN_DIR="${OPENGATEWAY_BIN_DIR:-$HOME/.local/bin}"
-mkdir -p "$BIN_DIR"
+# Use explicit default for root / non-interactive (curl|bash may have unset HOME)
+BIN_DIR="${OPENGATEWAY_BIN_DIR:-${HOME:-/root}/.local/bin}"
+mkdir -p "$BIN_DIR" || {
+  echo "  WARN: could not create $BIN_DIR; CLI remains at $OPENGATEWAY_POC_ROOT/opengateway"
+  echo "  Run: export PATH=\"$OPENGATEWAY_POC_ROOT:\$PATH\"  and use opengateway from there."
+  BIN_DIR=""
+}
+[[ -z "$BIN_DIR" ]] || {
 cat > "$BIN_DIR/opengateway" << BINWRAP
 #!/usr/bin/env bash
 export OPENGATEWAY_POC_ROOT="$OPENGATEWAY_POC_ROOT"
@@ -163,13 +169,19 @@ add_path_to_shell() {
   echo "$line" >> "$file"
   echo "  Added $BIN_DIR to PATH in $file"
 }
-add_path_to_shell "$HOME/.profile"
-add_path_to_shell "$HOME/.bashrc"
-if [[ -n "${ZSH_VERSION:-}" ]] || [[ -f "$HOME/.zshrc" ]]; then
-  add_path_to_shell "$HOME/.zshrc"
+# Ensure at least .profile exists so PATH is set for next login
+PROFILE_HOME="${HOME:-/root}"
+[[ ! -f "$PROFILE_HOME/.profile" ]] && touch "$PROFILE_HOME/.profile"
+add_path_to_shell "$PROFILE_HOME/.profile"
+add_path_to_shell "$PROFILE_HOME/.bashrc"
+if [[ -f "$PROFILE_HOME/.zshrc" ]]; then
+  add_path_to_shell "$PROFILE_HOME/.zshrc"
 fi
-export PATH="$BIN_DIR:$PATH"
-echo "  Run: opengateway status   (or open a new shell if opengateway not found)"
+echo ""
+echo "  For this shell, run:  export PATH=\"$BIN_DIR:\$PATH\""
+echo "  Then: opengateway status"
+echo "  (Or open a new login shell so PATH is loaded from .profile)"
+}
 
 # --- Phase 3: Gauge and join (poc-node) ---
 echo ""
