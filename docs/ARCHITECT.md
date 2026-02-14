@@ -223,6 +223,10 @@ User Request (Asia) → Asia Region Gateway
 - Gossip protocol for cluster membership updates
 - Heartbeat mechanism for node health monitoring
 
+Discovery is **peer-to-peer** (no central directory); nodes can join from any location using an open-source stack. **Full specification**: [architecture/DISCOVERY.md](./architecture/DISCOVERY.md).
+
+*(Options table and detailed recommendation: [architecture/DISCOVERY.md](./architecture/DISCOVERY.md).)*
+
 ---
 
 ### 8. Token Economy and Security

@@ -6,10 +6,62 @@ Rough implementation to validate the core flow: **nodes join a cluster**, **disc
 
 ---
 
+## Do we have enough context to build the POC?
+
+**Yes.** The following is in place; the rest is a few implementation-time choices.
+
+| What we have | Where |
+|--------------|--------|
+| **Dependencies** — EXO, Python, Node, Hyperswarm, curl (machine can install EXO and be discovered) | [Dependencies](#dependencies-to-build-the-poc-exo--discovery--join-cluster) |
+| **Install flow** — Install deps → Install CLI → Gauge resources → Determine clusters → Join cluster | [Install flow](#install-flow-what-installsh-does) |
+| **CLI (minimum)** — status, clusters, connect, disconnect, resources, eligible, peers | [CLI (minimum)](#cli-minimum) |
+| **Resource tiers** — Model A/B/C/D thresholds for “which clusters this machine can join” | [Resource tiers](#resource-tiers-for-cluster-eligibility-poc) |
+| **Scope** — 3 nodes, 1 cluster, 1 prompt/response; no tokens, regions, or tiers | This doc, [POC Scope](#poc-scope) |
+| **Scenario** — NodeA → NodeB → NodeC + prompt flow and success criteria | [Scenario](#scenario-three-nodes-one-cluster-one-prompt), [Success Criteria](#success-criteria-poc) |
+| **Execution plan** — Phases 1–5 with tasks/subtasks and checkboxes | [Execution Guidelines](#execution-guidelines) |
+| **Cluster identity** — Default `gatewayai-poc`; overridable via `POC_CLUSTER_ID` | [Run the POC script](#run-the-poc-script), `scripts/run-poc.sh` |
+| **Discovery** — P2P options (libp2p, Hyperswarm, EXO), bootstrap, any-location join | [architecture/DISCOVERY.md](architecture/DISCOVERY.md) |
+| **Message concepts** — `inference_request` / `inference_response`; optional `request_id` | [Minimal Architecture](#minimal-architecture-poc), [Implementation Notes](#implementation-notes) |
+| **High-level architecture** — Regions, clusters, request routing (for later) | [ARCHITECT.md](ARCHITECT.md), [architecture/](architecture/) |
+
+**Decisions to make at implementation start (Phase 1):**
+
+1. **Tech stack** — Language/runtime (Go, Node/JS, or Python) and discovery implementation: EXO (LAN), libp2p (cross-location), or Hyperswarm (Node/JS + NAT). See [DISCOVERY.md](architecture/DISCOVERY.md).
+2. **Message wire format** — Define the exact shape of `inference_request` and `inference_response` (e.g. JSON over the P2P channel) and whether to include `request_id`. Task 1.2 in the execution guidelines.
+3. **POC bootstrap** — For same-LAN: EXO UDP discovery needs no bootstrap. For cross-location or libp2p: use one known peer as bootstrap (e.g. first node’s address) or a small bootstrap list for the POC.
+
+Once those are chosen, the rest of the POC can be implemented from this doc and the execution checklist.
+
+---
+
+## Before building the install script: what to decide
+
+Things to nail down so the POC install script and CLI can be implemented without drift:
+
+| # | Topic | Question / decision |
+|---|--------|----------------------|
+| 1 | **EXO install** | Exact install method: `pip install exo-lang` or different package/source? Confirm from EXO docs and stick to it. |
+| 2 | **Discovery for POC** | Use **only Hyperswarm** (current), **only EXO** (UDPDiscovery), or **both** (EXO for inference, Hyperswarm for discovery)? One clear choice avoids two stacks. |
+| 3 | **CLI ↔ node** | Is the node a **daemon** (CLI talks to it via socket/API) or **foreground process** (user runs it in a terminal; CLI reads config/pid/state file)? Affects how `status` and `clusters` get data. |
+| 4 | **CLI entry point** | How is the CLI invoked? e.g. `opengateway` or `og` in PATH (symlink/wrapper in install root), or `node ~/.opengateway-poc/cli.js`? |
+| 5 | **Install root layout** | What lives under `OPENGATEWAY_POC_ROOT`? e.g. `config.json`, `resources.json`, `poc-node.js`, `cli.js`, `node_modules/`, `state.json` (current clusters/peers), `logs/`. Document the layout. |
+| 6 | **Resource gauge: OS** | **Decided: Linux only for now.** Use /proc, nvidia-smi, df; no macOS/Windows in POC. |
+| 7 | **Resource profile path** | Where to write the gauged profile? e.g. `$OPENGATEWAY_POC_ROOT/resources.json`. Same path for CLI `resources` and for “determine eligible clusters”. |
+| 8 | **POC: one cluster vs many** | POC joins **one** cluster (e.g. `gatewayai-poc`) only, or multiple (e.g. all eligible A/B/C/D)? Doc says one cluster; `eligible` can still list what the machine *could* join. |
+| 9 | **Join at install vs later** | Does install.sh **join a cluster and start the node** at the end (current “run node” behavior), or only **prepare** so the user runs `opengateway connect gatewayai-poc` (or `opengateway start`) after? |
+| 10 | **Bootstrap (cross-LAN)** | POC same-LAN only (no bootstrap), or support cross-LAN with a bootstrap list? If cross-LAN, where does the list come from (env, config, default URL)? |
+| 11 | **Idempotency** | Can the user re-run install.sh (e.g. upgrade)? Overwrite config, skip existing Node/Python, or prompt? |
+| 12 | **Errors** | EXO install fails, or no Python 3.10: fail fast and exit, or best-effort (e.g. install Node + Hyperswarm only and document “EXO optional for POC”)? |
+
+Deciding 1–2 and 3–5 is enough to start; 6 is set (Linux); 7–12 can be fixed during implementation if needed.
+
+---
+
 ## POC Scope
 
 | In scope | Out of scope (for POC) |
 |----------|-------------------------|
+| **Linux** as the target platform (install, CLI, gauge, discovery) | macOS / Windows native (later) |
 | Node process that joins a cluster | Full geographic region detection |
 | Discovery of other nodes in same cluster | Resource-based model tiers (A/B/C/D) |
 | One node sends a prompt; another answers | Token balance, proofs, ledger |
@@ -96,7 +148,7 @@ NodeC (location 3)  →  joins cluster  →  "I see NodeA, NodeB" → sends prom
 ```
 
 - **One cluster** for the POC (no regions, no model tiers).
-- **Discovery**: EXO (or minimal DHT/pubsub) so NodeB and NodeC find NodeA and each other.
+- **Discovery**: EXO (or minimal DHT/pubsub) so NodeB and NodeC find NodeA and each other. For full discovery design and open-source options (libp2p, Hyperswarm), see [architecture/DISCOVERY.md](architecture/DISCOVERY.md).
 - **Prompt/response**: Simple message type (e.g. "inference_request" / "inference_response") over the same P2P layer or a thin RPC on top.
 
 ---
@@ -122,26 +174,124 @@ After that, we can iterate: add region/cluster naming, model tiers, then tokens 
 
 ---
 
-## Run the POC script
+## Dependencies (to build the POC: EXO + discovery + join cluster)
 
-Simple script you can curl and execute to print cluster ID, repo path, and Phase 1 env checks:
+Everything a **machine** needs so it can install EXO, be discovered, and join a cluster:
 
-**From repo (local):**
+| Dependency | Purpose | Installed by install.sh? |
+|------------|---------|---------------------------|
+| **curl** | Fetch install script and assets when run via `curl \| bash`. | No — must be on the machine already. |
+| **Python 3.10+** | Runtime for EXO (distributed inference framework). | Yes (or prompt). |
+| **pip** | Install EXO and Python deps. | With Python / Yes. |
+| **EXO** (exo-lang) | Clustering and inference; join EXO cluster. | Yes — `pip install exo-lang` (or per EXO docs). |
+| **Node.js 18+** | Runtime for discovery (Hyperswarm) and POC CLI. | Yes (check / fnm) or prompt. |
+| **npm** | Install Hyperswarm and CLI deps. | Bundled with Node.js. |
+| **Hyperswarm** (npm) | P2P discovery; machine can be discovered and find peers. | Yes — `npm install` in install root. |
+| **CUDA / nvidia-smi** (optional) | GPU detection for resource gauge and cluster eligibility. | No — use if present for GPU VRAM. |
+
+So: **curl** is the only hard prerequisite before running the script. install.sh installs Python 3.10+, pip, EXO, Node.js 18+, npm, and Hyperswarm so the machine can run EXO and join a cluster via discovery.
+
+For the full production node stack, see [architecture/ONBOARDING_NODES.md](architecture/ONBOARDING_NODES.md) §3 (nginx, Docker, etc.).
+
+---
+
+## Install flow (what install.sh does)
+
+The script runs in order:
+
+1. **Install dependencies**  
+   Install (or verify) everything in the [Dependencies](#dependencies-to-build-the-poc-exo--discovery--join-cluster) table on the machine: curl check, Python 3.10+, pip, EXO, Node.js 18+, npm, Hyperswarm (and optional GPU tooling if needed).
+
+2. **Install CLI**  
+   Install a minimal CLI so the user can control the node and inspect state. Minimum commands: [CLI (minimum)](#cli-minimum).
+
+3. **Gauge machine resources**  
+   Detect CPU (cores), RAM, GPU (VRAM if present), and disk. Persist a small resource profile (e.g. under `~/.opengateway-poc` or install root) so the next step and the node can use it. **Linux only for now** (e.g. /proc, nvidia-smi, df).
+
+4. **Determine which clusters this machine can join**  
+   Using the resource profile and cluster tier rules (see [Resource tiers](#resource-tiers-for-cluster-eligibility-poc)), compute which clusters this machine qualifies for (e.g. Model A only, or A+B, etc.). For POC, a single cluster ID (e.g. `gatewayai-poc`) is enough; tier logic can still be implemented for “which clusters” in the CLI.
+
+5. **Join the cluster**  
+   Using EXO (and/or Hyperswarm for discovery), join the chosen cluster(s) so the machine is discoverable and can participate (e.g. serve or send prompts). For POC this can be “join one cluster by ID”; later, “join all clusters this machine qualifies for”.
+
+---
+
+## CLI (minimum)
+
+The CLI is installed by install.sh and provides at least:
+
+| Command | Description |
+|---------|-------------|
+| **status** | Check the status of the node: running or not, listening address, uptime, health. |
+| **clusters** | List which clusters this node is currently connected to (cluster id and optional role). |
+| **connect** \<cluster\> | Connect (join) to a cluster by id. |
+| **disconnect** \<cluster\> | Disconnect (leave) from a cluster by id. |
+| **resources** | Show the gauged machine resources (CPU, RAM, GPU, disk) and the last profile. |
+| **eligible** | List which clusters this machine *can* join based on resources and tier rules (from [Resource tiers](#resource-tiers-for-cluster-eligibility-poc)). |
+| **peers** [cluster] | List peers in the given cluster (or current/default cluster). |
+
+Optional for POC: **join** / **leave** as aliases for connect / disconnect; **prompt** \<text\> to send one inference prompt (like current `POC_PROMPT` flow).
+
+---
+
+## Resource tiers (for cluster eligibility, POC)
+
+Used by “gauge resources” and “determine which clusters this machine can join”. Based on [ARCHITECT.md](ARCHITECT.md) §2.2; POC can use a single cluster first, then add tier logic.
+
+| Cluster | CPU | RAM | GPU VRAM | Disk |
+|---------|-----|-----|----------|------|
+| **Model A** | 4+ cores | 8GB+ | Optional | 20GB+ |
+| **Model B** | 4+ cores | 12GB+ | 8GB+ | 30GB+ |
+| **Model C** | 8+ cores | 32GB+ | 24GB+ | 150GB+ |
+| **Model D** | 16+ cores | 64GB+ | 48GB+ | 500GB+ |
+
+The gauge step fills CPU, RAM, GPU VRAM, disk; “eligible” is the set of clusters whose row the machine satisfies.
+
+---
+
+## Run the POC: one command per node
+
+Each **machine** (node) used for testing runs one **curl** of the install script. The script runs the [Install flow](#install-flow-what-installsh-does): install dependencies, install CLI, gauge resources, determine eligible clusters, and join the cluster (and optionally start the node process for the three-node test).
+
+**Install script (curl entry point):** `scripts/install.sh`
+
+**NodeA (first node – must stay running, serves prompts):**
 ```bash
-./scripts/run-poc.sh
+curl -fsSL https://raw.githubusercontent.com/<org>/opengateway/main/scripts/install.sh | NODE_NAME=NodeA POC_SERVE=1 bash
+```
+Or from repo: `NODE_NAME=NodeA POC_SERVE=1 ./scripts/install.sh`
+
+**NodeB (second node – joins cluster, can also serve):**
+```bash
+curl -fsSL https://raw.githubusercontent.com/<org>/opengateway/main/scripts/install.sh | NODE_NAME=NodeB POC_SERVE=1 bash
 ```
 
-**Curled and executed (once repo is cloneable via raw URL):**
+**NodeC (third node – joins and sends one prompt, then exits):**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<org>/opengateway/main/scripts/run-poc.sh | bash
+curl -fsSL https://raw.githubusercontent.com/<org>/opengateway/main/scripts/install.sh | NODE_NAME=NodeC POC_PROMPT="What is 2+2?" bash
+```
+Output: the response (e.g. `What is 2+2?` or `4` if you use an echo server).
+
+**Env options:**
+
+| Env | Default | Description |
+|-----|---------|-------------|
+| `POC_CLUSTER_ID` | `gatewayai-poc` | Cluster/topic all nodes join |
+| `NODE_NAME` | auto | Display name (NodeA, NodeB, NodeC) |
+| `POC_SERVE` | `0` | Set `1` so this node answers prompts (echo) |
+| `POC_PROMPT` | — | If set, send this prompt and print response then exit |
+| `OPENGATEWAY_POC_ROOT` | `~/.opengateway-poc` | Install and config directory |
+
+**Same machine (three terminals):** Run NodeA in terminal 1, NodeB in terminal 2, then NodeC in terminal 3. Use the same `POC_CLUSTER_ID` (default is fine).
+
+**Other machine / path to script:** Use the script URL in curl, or a local path:
+```bash
+curl -fsSL file:///path/to/opengateway/scripts/install.sh | NODE_NAME=NodeA POC_SERVE=1 bash
+# or
+/path/to/opengateway/scripts/install.sh
 ```
 
-**Download then run:**
-```bash
-curl -fsSL <url-to-run-poc.sh> -o run-poc.sh && chmod +x run-poc.sh && ./run-poc.sh
-```
-
-Override cluster ID: `POC_CLUSTER_ID=my-cluster ./scripts/run-poc.sh`
+**Optional – env check only (no node):** `./scripts/run-poc.sh` prints cluster ID and Phase 1 checks.
 
 ---
 
@@ -149,17 +299,31 @@ Override cluster ID: `POC_CLUSTER_ID=my-cluster ./scripts/run-poc.sh`
 
 Progress checklist: phases → tasks → subtasks. Mark checkboxes as you complete them.
 
-### Phase 1: Environment & cluster identity
+### Phase 1: Environment, dependencies, install flow & CLI
 
-- [ ] **Task 1.1: Prepare development environment**
-  - [ ] 1.1.1 Install/verify EXO (or chosen P2P stack) and docs
-  - [ ] 1.1.2 Choose cluster identity (e.g. cluster name / topic / DHT key)
-  - [ ] 1.1.3 Document bootstrap endpoint or bootstrap node for POC
+- [ ] **Task 1.1: Implement install.sh – dependencies**
+  - [ ] 1.1.1 Install/verify curl, Python 3.10+, pip, EXO (exo-lang)
+  - [ ] 1.1.2 Install/verify Node.js 18+, npm, Hyperswarm (per [Dependencies](#dependencies-to-build-the-poc-exo--discovery--join-cluster))
+  - [ ] 1.1.3 Document bootstrap endpoint or bootstrap node for POC (if needed)
 
-- [ ] **Task 1.2: Define POC message format**
-  - [ ] 1.2.1 Define "join cluster" / peer advertisement format
-  - [ ] 1.2.2 Define "inference_request" and "inference_response" (or echo) message format
-  - [ ] 1.2.3 Optional: define request_id for matching responses
+- [ ] **Task 1.2: Implement install.sh – CLI**
+  - [ ] 1.2.1 Install minimal CLI (per [CLI (minimum)](#cli-minimum))
+  - [ ] 1.2.2 Implement **status** (node running, address, uptime)
+  - [ ] 1.2.3 Implement **clusters** (list connected clusters)
+  - [ ] 1.2.4 Implement **connect** / **disconnect** (join/leave cluster)
+  - [ ] 1.2.5 Implement **resources** (show gauged CPU, RAM, GPU, disk)
+  - [ ] 1.2.6 Implement **eligible** (clusters this machine can join from [Resource tiers](#resource-tiers-for-cluster-eligibility-poc))
+  - [ ] 1.2.7 Implement **peers** [cluster] (list peers in cluster)
+
+- [ ] **Task 1.3: Implement install.sh – gauge and join**
+  - [ ] 1.3.1 Gauge machine resources (CPU, RAM, GPU VRAM, disk); persist profile
+  - [ ] 1.3.2 Determine which clusters machine can join (tier rules)
+  - [ ] 1.3.3 Join cluster (EXO and/or Hyperswarm) so machine is discoverable
+
+- [ ] **Task 1.4: Define POC message format**
+  - [ ] 1.4.1 Define "join cluster" / peer advertisement format
+  - [ ] 1.4.2 Define "inference_request" and "inference_response" (or echo) message format
+  - [ ] 1.4.3 Optional: define request_id for matching responses
 
 ---
 

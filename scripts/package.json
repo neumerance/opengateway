@@ -1,0 +1,8 @@
+{
+  "name": "opengateway-poc",
+  "private": true,
+  "description": "OpenGateway POC node - Hyperswarm discovery, single cluster, prompt/response",
+  "dependencies": {
+    "hyperswarm": "^4.16.0"
+  }
+}

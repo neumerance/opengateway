@@ -19,7 +19,7 @@ Topics covered:
 - Node onboarding flow example (PC1 in Manila)
 - EXO framework integration
 - Request routing architecture (Phase 1: regional only)
-- Bootstrap and discovery mechanisms
+- Bootstrap and discovery (see [DISCOVERY.md](./DISCOVERY.md))
 - Design decisions and rationale
 
 **Start here** for high-level architecture overview.
@@ -106,6 +106,21 @@ Topics covered:
 
 ---
 
+### 🌐 [DISCOVERY.md](./DISCOVERY.md)
+**P2P discovery architecture (any-location join)**
+
+Topics covered:
+- **Requirements** — Any-location join, open source, P2P (no central directory)
+- **How P2P discovery works** — Bootstrap nodes as entry points only; DHT and gossip
+- **Open-source options** — libp2p (Kad-DHT), Hyperswarm/HyperDHT, EXO built-in
+- **Recommendation** — libp2p for cross-location; Hyperswarm for Node/JS; EXO for LAN
+- **Bootstrap nodes** — Role, per-region lists, configuration
+- **Integration** — Regions/clusters, EXO, onboarding
+
+**Read this** to understand how nodes find each other and join clusters from any network.
+
+---
+
 ### 🚀 [ONBOARDING_NODES.md](./ONBOARDING_NODES.md)
 **Node installation and onboarding architecture**
 
@@ -172,6 +187,8 @@ ARCHITECT.md (High-level overview)
     │
     ├─→ TOKEN_ARCHITECTURE.md (Token economy + security)
     │       └─→ PROOF_SYSTEM.md (Cryptographic proofs)
+    │
+    ├─→ DISCOVERY.md (P2P discovery, bootstrap, any-location join)
     │
     └─→ ONBOARDING_NODES.md (Installation + CLI)
 ```

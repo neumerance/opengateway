@@ -1762,6 +1762,7 @@ node:
     - ModelC
 
 # Network Configuration
+# Bootstrap nodes: initial entry points for P2P discovery. See DISCOVERY.md for design and options.
 network:
   p2p_port: 8333
   max_peers: 50

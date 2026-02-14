@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenGateway — How it works</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0c0f14;
+      --surface: #161b22;
+      --border: #21262d;
+      --muted: #7d8590;
+      --text: #e6edf3;
+      --asia: #3dd4c4;
+      --americas: #f0b429;
+      --europe: #a371f7;
+      --node-idle: #388bfd;
+      --node-active: #58a6ff;
+      --prompt: #7ee787;
+      --response: #79c0ff;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: 'DM Sans', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .wrap {
+      width: 100%;
+      max-width: 1000px;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    header {
+      text-align: center;
+      opacity: 0;
+      animation: fadeIn 0.8s ease 0.2s forwards;
+    }
+    header h1 {
+      font-size: 1.75rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin: 0 0 0.25rem 0;
+    }
+    header p {
+      font-size: 0.95rem;
+      color: var(--muted);
+      margin: 0;
+    }
+
+    .stage {
+      width: 100%;
+      aspect-ratio: 16/10;
+      max-height: 55vh;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      position: relative;
+      overflow: hidden;
+      opacity: 0;
+      animation: fadeIn 0.6s ease 0.5s forwards;
+    }
+
+    .stage svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .phase-caption {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      color: var(--muted);
+      min-height: 1.2em;
+      text-align: center;
+      opacity: 0;
+      animation: fadeIn 0.5s ease 1s forwards;
+    }
+    .phase-caption strong { color: var(--text); }
+
+    .controls {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      opacity: 0;
+      animation: fadeIn 0.5s ease 1.2s forwards;
+    }
+    .controls button {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      padding: 0.5rem 1rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .controls button:hover {
+      background: #1c2128;
+      border-color: var(--muted);
+    }
+    .controls .replay { color: var(--asia); border-color: var(--asia); }
+    .controls .replay:hover { background: rgba(61, 212, 196, 0.1); }
+
+    @keyframes fadeIn { to { opacity: 1; } }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.85; transform: scale(1.05); }
+    }
+    @keyframes pulseGlow {
+      0%, 100% { filter: drop-shadow(0 0 4px currentColor); }
+      50% { filter: drop-shadow(0 0 12px currentColor); }
+    }
+    @keyframes pull {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.15); opacity: 0.9; }
+    }
+    @keyframes cursorBlink {
+      0%, 45% { opacity: 1; }
+      50%, 100% { opacity: 0; }
+    }
+    .bubble-cursor { animation: cursorBlink 0.8s step-end infinite; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>OpenGateway</h1>
+      <p>Decentralized P2P AI inference — regions, model clusters, and request flow</p>
+    </header>
+    <div class="stage" id="stage">
+      <svg id="viz" viewBox="0 0 800 500" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="asiaGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#3dd4c4" stop-opacity="0.25"/>
+            <stop offset="100%" stop-color="#3dd4c4" stop-opacity="0.05"/>
+          </linearGradient>
+          <linearGradient id="americasGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#f0b429" stop-opacity="0.25"/>
+            <stop offset="100%" stop-color="#f0b429" stop-opacity="0.05"/>
+          </linearGradient>
+          <linearGradient id="europeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#a371f7" stop-opacity="0.25"/>
+            <stop offset="100%" stop-color="#a371f7" stop-opacity="0.05"/>
+          </linearGradient>
+          <filter id="glow">
+            <feGaussianBlur stdDeviation="2" result="blur"/>
+            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+        <!-- Regions (blobs) -->
+        <g id="regions"></g>
+        <!-- P2P connection lines -->
+        <g id="connections"></g>
+        <!-- Model cluster circles (A,B,C,D per region) -->
+        <g id="clusters"></g>
+        <!-- Nodes -->
+        <g id="nodes"></g>
+        <!-- Request path (animated line) -->
+        <g id="requestPath"></g>
+        <!-- Prompt/response particle -->
+        <g id="particle"></g>
+        <!-- Node A (requester) + bubble beside it -->
+        <g id="nodeA"></g>
+        <g id="bubbleNodeA"></g>
+      </svg>
+    </div>
+    <p class="phase-caption" id="caption">Initializing…</p>
+    <div class="controls">
+      <button type="button" id="btnReplay" class="replay">Replay</button>
+      <button type="button" id="btnPause">Pause</button>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const SVG_NS = 'http://www.w3.org/2000/svg';
+      const viz = document.getElementById('viz');
+      const caption = document.getElementById('caption');
+      const regionsG = document.getElementById('regions');
+      const connectionsG = document.getElementById('connections');
+      const clustersG = document.getElementById('clusters');
+      const nodesG = document.getElementById('nodes');
+      const requestPathG = document.getElementById('requestPath');
+      const particleG = document.getElementById('particle');
+      const nodeAG = document.getElementById('nodeA');
+      const bubbleNodeAG = document.getElementById('bubbleNodeA');
+
+      const colors = {
+        asia: '#3dd4c4',
+        americas: '#f0b429',
+        europe: '#a371f7'
+      };
+
+      // Region centers and radii (viewBox 800x500)
+      const regions = [
+        { id: 'asia',      cx: 220, cy: 220, r: 95,  label: 'Asia',         color: colors.asia },
+        { id: 'americas',  cx: 400, cy: 260, r: 90,  label: 'Americas',     color: colors.americas },
+        { id: 'europe',    cx: 580, cy: 220, r: 95,  label: 'Europe',       color: colors.europe }
+      ];
+
+      // Cluster positions relative to region center (offset)
+      const clusterOffsets = [
+        { x: -28, y: -25, tier: 'A' },
+        { x:  28, y: -25, tier: 'B' },
+        { x: -28, y:  25, tier: 'C' },
+        { x:  28, y:  25, tier: 'D' }
+      ];
+
+      let state = {
+        phase: 0,
+        paused: false,
+        nodes: [],
+        nodeElements: new Map(),
+        connectionPaths: []
+      };
+
+      function createRegionBlob(r) {
+        const path = document.createElementNS(SVG_NS, 'path');
+        const cx = r.cx, cy = r.cy, R = r.r;
+        const d = `M ${cx - R} ${cy} a ${R} ${R} 0 1 1 ${2*R} 0 a ${R} ${R} 0 1 1 ${-2*R} 0 z`;
+        path.setAttribute('d', d);
+        path.setAttribute('fill', `url(#${r.id}Grad)`);
+        path.setAttribute('stroke', r.color);
+        path.setAttribute('stroke-width', '1.5');
+        path.setAttribute('stroke-opacity', '0.6');
+        path.setAttribute('opacity', '0');
+        path.setAttribute('data-region', r.id);
+        return path;
+      }
+
+      function createClusterCircle(region, offset, index) {
+        const r = regions.find(x => x.id === region);
+        if (!r) return null;
+        const cx = r.cx + offset.x, cy = r.cy + offset.y;
+        const circle = document.createElementNS(SVG_NS, 'circle');
+        circle.setAttribute('cx', cx);
+        circle.setAttribute('cy', cy);
+        circle.setAttribute('r', 14);
+        circle.setAttribute('fill', 'none');
+        circle.setAttribute('stroke', r.color);
+        circle.setAttribute('stroke-width', '1');
+        circle.setAttribute('stroke-opacity', '0.5');
+        circle.setAttribute('opacity', '0');
+        circle.setAttribute('data-region', region);
+        circle.setAttribute('data-tier', offset.tier);
+        const label = document.createElementNS(SVG_NS, 'text');
+        label.setAttribute('x', cx);
+        label.setAttribute('y', cy + 4);
+        label.setAttribute('text-anchor', 'middle');
+        label.setAttribute('fill', r.color);
+        label.setAttribute('font-size', '10');
+        label.setAttribute('font-family', 'JetBrains Mono, monospace');
+        label.setAttribute('opacity', '0');
+        label.textContent = offset.tier;
+        const g = document.createElementNS(SVG_NS, 'g');
+        g.appendChild(circle);
+        g.appendChild(label);
+        return g;
+      }
+
+      function addRegions() {
+        regions.forEach((r, i) => {
+          const path = createRegionBlob(r);
+          regionsG.appendChild(path);
+          requestAnimationFrame(() => {
+            path.style.transition = 'opacity 0.6s ease';
+            path.style.opacity = '1';
+          });
+          const text = document.createElementNS(SVG_NS, 'text');
+          text.setAttribute('x', r.cx);
+          text.setAttribute('y', r.cy - r.r - 8);
+          text.setAttribute('text-anchor', 'middle');
+          text.setAttribute('fill', r.color);
+          text.setAttribute('font-size', '12');
+          text.setAttribute('font-weight', '600');
+          text.setAttribute('opacity', '0');
+          text.textContent = r.label;
+          regionsG.appendChild(text);
+          requestAnimationFrame(() => {
+            text.style.transition = `opacity 0.5s ease ${0.1 * i}s`;
+            text.style.opacity = '1';
+          });
+        });
+      }
+
+      function addClusters() {
+        regions.forEach(r => {
+          clusterOffsets.forEach(off => {
+            const g = createClusterCircle(r.id, off, 0);
+            if (g) clustersG.appendChild(g);
+          });
+        });
+        const circles = clustersG.querySelectorAll('circle, text');
+        circles.forEach((el, i) => {
+          el.style.transition = `opacity 0.4s ease ${0.02 * i}s`;
+          requestAnimationFrame(() => { el.style.opacity = '1'; });
+        });
+      }
+
+      function jitter(max) { return (Math.random() - 0.5) * 2 * max; }
+
+      function addNodes() {
+        const nodeCount = { asia: 3, americas: 3, europe: 3 };
+        state.nodes = [];
+        regions.forEach(reg => {
+          for (let i = 0; i < nodeCount[reg.id]; i++) {
+            const angle = (i / nodeCount[reg.id]) * Math.PI * 1.2 + 0.4;
+            const dist = reg.r * (0.35 + Math.random() * 0.35);
+            const node = {
+              id: `${reg.id}-${i}`,
+              region: reg.id,
+              x: reg.cx + Math.cos(angle) * dist + jitter(8),
+              y: reg.cy + Math.sin(angle) * dist + jitter(8),
+              color: reg.color
+            };
+            state.nodes.push(node);
+          }
+        });
+
+        state.nodes.forEach((n, i) => {
+          const g = document.createElementNS(SVG_NS, 'g');
+          g.setAttribute('opacity', '0');
+          const circle = document.createElementNS(SVG_NS, 'circle');
+          circle.setAttribute('cx', n.x);
+          circle.setAttribute('cy', n.y);
+          circle.setAttribute('r', 6);
+          circle.setAttribute('fill', n.color);
+          circle.setAttribute('stroke', '#0c0f14');
+          circle.setAttribute('stroke-width', '1');
+          circle.setAttribute('filter', 'url(#glow)');
+          g.appendChild(circle);
+          nodesG.appendChild(g);
+          state.nodeElements.set(n.id, g);
+          setTimeout(() => {
+            g.style.transition = 'opacity 0.35s ease';
+            g.style.opacity = '1';
+          }, 800 + i * 80);
+        });
+      }
+
+      function addConnections() {
+        state.nodes.forEach((a, i) => {
+          state.nodes.slice(i + 1).forEach(b => {
+            if (a.region !== b.region) return;
+            const path = document.createElementNS(SVG_NS, 'path');
+            const d = `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
+            path.setAttribute('d', d);
+            path.setAttribute('fill', 'none');
+            path.setAttribute('stroke', a.color);
+            path.setAttribute('stroke-width', '0.8');
+            path.setAttribute('stroke-opacity', '0.4');
+            path.setAttribute('stroke-dasharray', '4 3');
+            path.setAttribute('opacity', '0');
+            connectionsG.appendChild(path);
+            state.connectionPaths.push(path);
+          });
+        });
+        state.connectionPaths.forEach((path, i) => {
+          setTimeout(() => {
+            path.style.transition = 'opacity 0.3s ease';
+            path.style.opacity = '1';
+          }, 1200 + i * 40);
+        });
+      }
+
+      function drawRequestPath(from, to, color) {
+        requestPathG.innerHTML = '';
+        const path = document.createElementNS(SVG_NS, 'path');
+        const d = `M ${from.x} ${from.y} L ${to.x} ${to.y}`;
+        path.setAttribute('d', d);
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', color);
+        path.setAttribute('stroke-width', '2');
+        path.setAttribute('stroke-dasharray', '8 6');
+        path.setAttribute('stroke-linecap', 'round');
+        const len = path.getTotalLength?.();
+        path.style.strokeDasharray = '8 6';
+        path.style.strokeDashoffset = len != null ? len + 20 : '0';
+        path.style.transition = 'stroke-dashoffset 0.01s linear';
+        requestPathG.appendChild(path);
+        return path;
+      }
+
+      const PROMPT_TEXT = 'What is 2+2?';
+      const RESPONSE_TEXT = '4';
+      const NODE_A_POS = { x: 90, y: 250 };
+      const NODE_A_RADIUS = 18;
+      const BUBBLE_GAP = 14;
+      const BUBBLE_MIN_WIDTH = 100;
+      const BUBBLE_POS = { x: NODE_A_POS.x + NODE_A_RADIUS + BUBBLE_GAP + BUBBLE_MIN_WIDTH / 2, y: 250 };
+      const CHAR_MS = 70;
+      const CURSOR_MS = 500;
+
+      function drawNodeA() {
+        nodeAG.innerHTML = '';
+        const g = document.createElementNS(SVG_NS, 'g');
+        g.setAttribute('transform', `translate(${NODE_A_POS.x},${NODE_A_POS.y})`);
+        const circle = document.createElementNS(SVG_NS, 'circle');
+        circle.setAttribute('r', NODE_A_RADIUS);
+        circle.setAttribute('fill', '#7ee787');
+        circle.setAttribute('stroke', '#161b22');
+        circle.setAttribute('stroke-width', '2');
+        circle.setAttribute('filter', 'url(#glow)');
+        circle.setAttribute('data-node', 'nodeA');
+        g.appendChild(circle);
+        const label = document.createElementNS(SVG_NS, 'text');
+        label.setAttribute('x', 0);
+        label.setAttribute('y', 32);
+        label.setAttribute('text-anchor', 'middle');
+        label.setAttribute('fill', '#7ee787');
+        label.setAttribute('font-size', '12');
+        label.setAttribute('font-family', 'JetBrains Mono, monospace');
+        label.textContent = 'Node A';
+        g.appendChild(label);
+        nodeAG.appendChild(g);
+        return circle;
+      }
+
+      function pulseNodeA(callback) {
+        const circle = nodeAG.querySelector('circle');
+        if (circle) {
+          circle.style.animation = 'pull 0.5s ease';
+          setTimeout(() => {
+            circle.style.animation = '';
+            if (callback) callback();
+          }, 500);
+        } else if (callback) callback();
+      }
+
+      function showBubbleBesideNodeA() {
+        bubbleNodeAG.innerHTML = '';
+        const g = document.createElementNS(SVG_NS, 'g');
+        g.setAttribute('transform', `translate(${BUBBLE_POS.x},${BUBBLE_POS.y})`);
+        g.setAttribute('opacity', '0');
+        const paddingX = 20;
+        const paddingY = 12;
+        const rx = 12;
+        const tailTipX = NODE_A_POS.x + NODE_A_RADIUS - BUBBLE_POS.x;
+        const w0 = Math.max(BUBBLE_MIN_WIDTH, String(PROMPT_TEXT).length * 8 + paddingX * 2);
+        const h0 = paddingY * 2 + 20;
+        const rect = document.createElementNS(SVG_NS, 'rect');
+        rect.setAttribute('data-bubble-rect', '1');
+        rect.setAttribute('x', -w0 / 2);
+        rect.setAttribute('y', -h0 / 2);
+        rect.setAttribute('width', w0);
+        rect.setAttribute('height', h0);
+        rect.setAttribute('rx', rx);
+        rect.setAttribute('ry', rx);
+        rect.setAttribute('fill', 'rgba(126,231,135,0.18)');
+        rect.setAttribute('stroke', '#7ee787');
+        rect.setAttribute('stroke-width', '1.5');
+        g.appendChild(rect);
+        const tail = document.createElementNS(SVG_NS, 'path');
+        tail.setAttribute('data-bubble-tail', '1');
+        const leftX = -w0 / 2;
+        const tailBase = leftX + 6;
+        tail.setAttribute('d', `M ${tailTipX},0 L ${tailBase},-10 L ${tailBase},10 Z`);
+        tail.setAttribute('fill', 'rgba(126,231,135,0.18)');
+        tail.setAttribute('stroke', '#7ee787');
+        tail.setAttribute('stroke-width', '1.5');
+        tail.setAttribute('stroke-linejoin', 'round');
+        g.appendChild(tail);
+        const textEl = document.createElementNS(SVG_NS, 'text');
+        textEl.setAttribute('data-bubble-text', '1');
+        textEl.setAttribute('x', 0);
+        textEl.setAttribute('y', 0);
+        textEl.setAttribute('text-anchor', 'middle');
+        textEl.setAttribute('dominant-baseline', 'middle');
+        textEl.setAttribute('fill', '#7ee787');
+        textEl.setAttribute('font-size', '13');
+        textEl.setAttribute('font-family', 'JetBrains Mono, monospace');
+        textEl.textContent = '';
+        g.appendChild(textEl);
+        bubbleNodeAG.appendChild(g);
+        g.style.transition = 'opacity 0.25s ease';
+        requestAnimationFrame(() => { g.style.opacity = '1'; });
+        return { g, rect, textEl, tail };
+      }
+
+      function resizeBubbleRect(rect, text) {
+        const tail = bubbleNodeAG.querySelector('[data-bubble-tail]');
+        const paddingX = 20;
+        const paddingY = 12;
+        const rx = 12;
+        const w = Math.max(String(text).length * 8 + paddingX * 2, BUBBLE_MIN_WIDTH);
+        const h = paddingY * 2 + 20;
+        const leftX = -w / 2;
+        rect.setAttribute('x', leftX);
+        rect.setAttribute('y', -h / 2);
+        rect.setAttribute('width', w);
+        rect.setAttribute('height', h);
+        const tailTipX = NODE_A_POS.x + NODE_A_RADIUS - BUBBLE_POS.x;
+        const tailBase = leftX + 6;
+        if (tail) tail.setAttribute('d', `M ${tailTipX},0 L ${tailBase},-10 L ${tailBase},10 Z`);
+      }
+
+      function typeInBubble(text, isPrompt, callback) {
+        const g = bubbleNodeAG.querySelector('g');
+        if (!g) { if (callback) callback(); return; }
+        const rect = g.querySelector('[data-bubble-rect]');
+        const textEl = g.querySelector('[data-bubble-text]');
+        const tail = g.querySelector('[data-bubble-tail]');
+        if (!rect || !textEl) { if (callback) callback(); return; }
+        if (!isPrompt) {
+          rect.setAttribute('fill', 'rgba(121,192,255,0.18)');
+          rect.setAttribute('stroke', '#79c0ff');
+          textEl.setAttribute('fill', '#79c0ff');
+          if (tail) {
+            tail.setAttribute('fill', 'rgba(121,192,255,0.18)');
+            tail.setAttribute('stroke', '#79c0ff');
+          }
+        }
+        let i = 0;
+        textEl.textContent = '';
+        resizeBubbleRect(rect, '');
+        let cursorInterval;
+        function showCursor() {
+          const typed = text.slice(0, i);
+          textEl.textContent = typed + '|';
+          resizeBubbleRect(rect, typed + '|');
+        }
+        function hideCursor() {
+          const typed = text.slice(0, i);
+          textEl.textContent = typed + ' ';
+          resizeBubbleRect(rect, typed + ' ');
+        }
+        function addChar() {
+          if (i >= text.length) {
+            if (cursorInterval) clearInterval(cursorInterval);
+            if (callback) callback();
+            return;
+          }
+          const typed = text.slice(0, i + 1);
+          textEl.textContent = typed + '|';
+          resizeBubbleRect(rect, typed + '|');
+          i++;
+          if (!cursorInterval) {
+            cursorInterval = setInterval(() => {
+              if (textEl.textContent.endsWith('|')) hideCursor();
+              else showCursor();
+            }, CURSOR_MS);
+          }
+          setTimeout(addChar, CHAR_MS);
+        }
+        addChar();
+      }
+
+      function removeCursorAndShowFinal(text) {
+        const textEl = bubbleNodeAG.querySelector('[data-bubble-text]');
+        const rect = bubbleNodeAG.querySelector('[data-bubble-rect]');
+        if (textEl) textEl.textContent = text;
+        if (rect) resizeBubbleRect(rect, text);
+      }
+
+      function runRequestFlow() {
+        const europe = regions.find(r => r.id === 'europe');
+        const targetNode = state.nodes.find(n => n.region === 'europe');
+        if (!europe || !targetNode) return;
+
+        nodeAG.innerHTML = '';
+        bubbleNodeAG.innerHTML = '';
+        requestPathG.innerHTML = '';
+        particleG.innerHTML = '';
+
+        const circle = drawNodeA();
+        caption.innerHTML = 'Node A <strong>pulls</strong> (sends request)…';
+        pulseNodeA(() => {
+          showBubbleBesideNodeA();
+          caption.innerHTML = 'Prompt appears → <strong>typing</strong>…';
+          typeInBubble(PROMPT_TEXT, true, () => {
+            removeCursorAndShowFinal(PROMPT_TEXT);
+            caption.innerHTML = 'Request sent to cluster → node runs <strong>inference</strong>…';
+            const path1 = drawRequestPath(NODE_A_POS, { x: europe.cx - 50, y: europe.cy }, '#7ee787');
+            path1.style.strokeDashoffset = '0';
+            path1.style.transition = 'stroke-dashoffset 0.6s ease';
+            const g = state.nodeElements.get(targetNode.id);
+            if (g) {
+              const el = g.querySelector('circle');
+              if (el) el.style.animation = 'pulseGlow 0.6s ease 2';
+            }
+            setTimeout(() => {
+              requestPathG.innerHTML = '';
+              caption.innerHTML = 'Response received → bubble <strong>updates</strong> with result.';
+              const rect = bubbleNodeAG.querySelector('[data-bubble-rect]');
+              const textEl = bubbleNodeAG.querySelector('[data-bubble-text]');
+              const tail = bubbleNodeAG.querySelector('[data-bubble-tail]');
+              if (rect) {
+                rect.setAttribute('fill', 'rgba(121,192,255,0.18)');
+                rect.setAttribute('stroke', '#79c0ff');
+              }
+              if (tail) {
+                tail.setAttribute('fill', 'rgba(121,192,255,0.18)');
+                tail.setAttribute('stroke', '#79c0ff');
+              }
+              if (textEl) textEl.setAttribute('fill', '#79c0ff');
+              typeInBubble(RESPONSE_TEXT, false, () => {
+                removeCursorAndShowFinal(RESPONSE_TEXT);
+                caption.innerHTML = 'Request complete. <strong>Decentralized P2P inference.</strong>';
+              });
+            }, 1200);
+          });
+        });
+      }
+
+      function setCaption(text) {
+        caption.innerHTML = text;
+      }
+
+      function playSequence() {
+        setCaption('Global network: <strong>geographic regions</strong>');
+        regionsG.innerHTML = '';
+        clustersG.innerHTML = '';
+        nodesG.innerHTML = '';
+        connectionsG.innerHTML = '';
+        requestPathG.innerHTML = '';
+        particleG.innerHTML = '';
+        nodeAG.innerHTML = '';
+        bubbleNodeAG.innerHTML = '';
+        state.connectionPaths = [];
+
+        addRegions();
+        setTimeout(() => {
+          setCaption('Within each region: <strong>model clusters A, B, C, D</strong> (by hardware)');
+          addClusters();
+        }, 1200);
+        setTimeout(() => {
+          setCaption('Nodes join → <strong>P2P discovery</strong> and connections');
+          addNodes();
+          addConnections();
+        }, 2200);
+        setTimeout(() => {
+          setCaption('User in a region sends a <strong>prompt</strong>…');
+          runRequestFlow();
+        }, 4200);
+      }
+
+      document.getElementById('btnReplay').addEventListener('click', () => {
+        state.paused = false;
+        playSequence();
+      });
+      document.getElementById('btnPause').addEventListener('click', () => {
+        state.paused = !state.paused;
+        document.getElementById('btnPause').textContent = state.paused ? 'Resume' : 'Pause';
+      });
+
+      playSequence();
+    })();
+  </script>
+</body>
+</html>
