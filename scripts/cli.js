@@ -8,7 +8,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execSync, spawnSync } = require('child_process');
 
 const POC_ROOT = process.env.OPENGATEWAY_POC_ROOT || path.join(process.env.HOME || process.env.USERPROFILE || '', '.opengateway-poc');
 const CONFIG_PATH = path.join(POC_ROOT, 'config.json');
@@ -49,7 +49,7 @@ function getConfig() {
 }
 
 function getState() {
-  return readJson(STATE_PATH, { clusters: [], nodePid: null });
+  return readJson(STATE_PATH, { clusters: [], nodePid: null, supportedModels: [], runtime: {} });
 }
 
 function setState(update) {
@@ -130,6 +130,9 @@ function cmdStatus() {
   console.log('Cluster ID:  ', config.cluster_id || '(none)');
   console.log('Node name:   ', config.node_name || '(auto)');
   console.log('Clusters:    ', state.clusters.length ? state.clusters.map(c => c.id).join(', ') : 'none');
+  if (state.runtime && (state.runtime.backend || state.runtime.model)) {
+    console.log('Runtime:     ', `${state.runtime.backend || 'unknown'}${state.runtime.model ? ` (${state.runtime.model})` : ''}`);
+  }
   if (state.supportedModels && state.supportedModels.length) {
     console.log('Models:      ', state.supportedModels.join(', '));
   }
@@ -241,23 +244,74 @@ function cmdStart() {
   } else {
     console.log('Eligible models:', eligible.join(', '));
   }
-  console.log('Starting node for cluster:', clusterId);
+  const backend = (process.env.POC_INFERENCE_BACKEND || state.runtime?.backend || 'ollama').toLowerCase();
+  const model = process.env.OLLAMA_MODEL || state.runtime?.model || 'llama3.2:1b';
+
+  if (backend === 'ollama') {
+    const ollamaExists = spawnSync('ollama', ['--version'], { stdio: 'ignore' }).status === 0;
+    if (!ollamaExists) {
+      console.error('Ollama not found. Install ollama or set POC_INFERENCE_BACKEND=echo.');
+      process.exit(1);
+    }
+    // Start local Ollama server if not running.
+    let ollamaReady = false;
+    try {
+      execSync('curl -fsSL http://127.0.0.1:11434/api/tags >/dev/null', { stdio: 'ignore' });
+      ollamaReady = true;
+    } catch (_) {}
+    if (!ollamaReady) {
+      console.log('Starting Ollama server...');
+      execSync('nohup ollama serve >/tmp/opengateway-ollama.log 2>&1 &');
+      for (let i = 0; i < 10; i += 1) {
+        try {
+          execSync('curl -fsSL http://127.0.0.1:11434/api/tags >/dev/null', { stdio: 'ignore' });
+          ollamaReady = true;
+          break;
+        } catch (_) {
+          execSync('sleep 1');
+        }
+      }
+    }
+    if (!ollamaReady) {
+      console.error('Ollama server is not reachable at http://127.0.0.1:11434');
+      process.exit(1);
+    }
+    // Ensure selected model exists locally.
+    const hasModel = spawnSync('ollama', ['show', model], { stdio: 'ignore' }).status === 0;
+    if (!hasModel) {
+      console.log(`Pulling Ollama model: ${model} ...`);
+      const pull = spawnSync('ollama', ['pull', model], { stdio: 'inherit' });
+      if (pull.status !== 0) {
+        console.error(`Failed to pull model ${model}.`);
+        process.exit(1);
+      }
+    }
+  }
+
+  setState({ runtime: { backend, model } });
+  console.log('Starting node daemon for cluster:', clusterId);
   const { spawn } = require('child_process');
+  const logsDir = path.join(POC_ROOT, 'logs');
+  fs.mkdirSync(logsDir, { recursive: true });
+  const outFd = fs.openSync(path.join(logsDir, 'node.out.log'), 'a');
+  const errFd = fs.openSync(path.join(logsDir, 'node.err.log'), 'a');
   const child = spawn(runScript, [], {
     env: {
       ...process.env,
       OPENGATEWAY_POC_ROOT: POC_ROOT,
       POC_CLUSTER_ID: clusterId,
       POC_SUPPORTED_MODELS: eligible.join(','),
+      POC_INFERENCE_BACKEND: backend,
+      OLLAMA_MODEL: model,
     },
-    stdio: 'inherit',
+    detached: true,
+    stdio: ['ignore', outFd, errFd],
     cwd: POC_ROOT,
   });
+  child.unref();
   setState({ nodePid: child.pid });
-  child.on('exit', (code) => {
-    setState({ nodePid: null });
-    if (code !== 0 && code !== null) process.exitCode = code;
-  });
+  console.log('Node daemon started (pid ' + child.pid + ').');
+  console.log('Logs:', path.join(logsDir, 'node.out.log'), path.join(logsDir, 'node.err.log'));
 }
 
 function cmdStop() {
@@ -279,10 +333,22 @@ function cmdStop() {
 
 function cmdRestart() {
   cmdStop();
+  try { execSync('sleep 1'); } catch (_) {}
   cmdStart();
 }
 
-function cmdPrompt(...args) {
+function runPromptOnce(sendPath, clusterId, model, promptText) {
+  const sendArgs = [sendPath, promptText];
+  if (model) sendArgs.push(model);
+  const r = spawnSync(process.execPath, sendArgs, {
+    env: { ...process.env, OPENGATEWAY_POC_ROOT: POC_ROOT, POC_CLUSTER_ID: clusterId, POC_MODEL: model || '' },
+    cwd: POC_ROOT,
+    stdio: 'inherit',
+  });
+  return r.status || 0;
+}
+
+async function cmdPrompt(...args) {
   const sendPath = path.join(POC_ROOT, 'send-prompt.js');
   if (!fs.existsSync(sendPath)) {
     console.error('send-prompt.js not found. Run install.sh Phase 3 first.');
@@ -298,18 +364,39 @@ function cmdPrompt(...args) {
     }
     parts.push(args[i]);
   }
-  const promptText = parts.length ? parts.join(' ') : (process.env.POC_PROMPT || 'What is 2+2?');
   const state = getState();
   const clusterId = getConfig().cluster_id || (state.clusters[0] && state.clusters[0].id) || 'gatewayai-poc';
-  const { spawnSync } = require('child_process');
-  const sendArgs = [sendPath, promptText];
-  if (model) sendArgs.push(model);
-  const r = spawnSync(process.execPath, sendArgs, {
-    env: { ...process.env, OPENGATEWAY_POC_ROOT: POC_ROOT, POC_CLUSTER_ID: clusterId, POC_MODEL: model || '' },
-    cwd: POC_ROOT,
-    stdio: 'inherit',
-  });
-  if (r.status !== 0) process.exit(r.status);
+  if (!model && state.runtime && state.runtime.model) model = state.runtime.model;
+
+  // One-shot mode
+  if (parts.length > 0) {
+    const status = runPromptOnce(sendPath, clusterId, model, parts.join(' '));
+    if (status !== 0) process.exit(status);
+    return;
+  }
+
+  // Interactive chat mode
+  const readline = require('readline');
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  console.log('Interactive chat mode. Type /exit to quit.');
+  console.log('Commands: /model <model-id> to switch model in this session.');
+  if (model) console.log('Current model:', model);
+
+  for await (const line of rl) {
+    const input = String(line || '').trim();
+    if (!input) continue;
+    if (input === '/exit' || input === '/quit') {
+      rl.close();
+      break;
+    }
+    if (input.startsWith('/model ')) {
+      model = input.slice('/model '.length).trim();
+      console.log('Model set to:', model || '(default)');
+      continue;
+    }
+    const status = runPromptOnce(sendPath, clusterId, model, input);
+    if (status !== 0) console.log('Request failed with exit code', status);
+  }
 }
 
 const COMMANDS = {
@@ -335,11 +422,15 @@ function main() {
   if (!fn) {
     console.error('Usage: opengateway <command> [args]');
     console.error('Commands: status, clusters, connect, disconnect, resources, eligible, peers, gauge, start, stop, restart, prompt');
-    console.error('Prompt usage: opengateway prompt \"text\" [--model <model-id>]');
+    console.error('Prompt usage: opengateway prompt [\"text\"] [--model <model-id>]');
+    console.error('No text => interactive chat mode (/exit to quit)');
     console.error('Aliases:  join = connect, leave = disconnect');
     process.exit(1);
   }
-  fn(...args);
+  Promise.resolve(fn(...args)).catch((err) => {
+    console.error(err.message || err);
+    process.exit(1);
+  });
 }
 
 main();
