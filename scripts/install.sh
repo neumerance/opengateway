@@ -163,6 +163,15 @@ else
   }
 fi
 chmod +x "$OPENGATEWAY_POC_ROOT/node-run.sh"
+if [[ -n "$REPO_ROOT" && -f "$SCRIPT_DIR/send-prompt.js" ]]; then
+  cp "$SCRIPT_DIR/send-prompt.js" "$OPENGATEWAY_POC_ROOT/"
+else
+  curl -fsSL -o "$OPENGATEWAY_POC_ROOT/send-prompt.js" "$REPO_RAW_URL/scripts/send-prompt.js" || {
+    echo "  Failed to download send-prompt.js. Run from repo or set REPO_RAW_URL."
+    exit 1
+  }
+fi
+chmod +x "$OPENGATEWAY_POC_ROOT/send-prompt.js"
 # Gauge machine resources (Linux)
 if command -v node &>/dev/null; then
   OPENGATEWAY_POC_ROOT="$OPENGATEWAY_POC_ROOT" node "$OPENGATEWAY_POC_ROOT/cli.js" gauge 2>/dev/null || true

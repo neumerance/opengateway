@@ -238,6 +238,24 @@ function cmdStart() {
   });
 }
 
+function cmdPrompt(...args) {
+  const sendPath = path.join(POC_ROOT, 'send-prompt.js');
+  if (!fs.existsSync(sendPath)) {
+    console.error('send-prompt.js not found. Run install.sh Phase 3 first.');
+    process.exit(1);
+  }
+  const promptText = args.length ? args.join(' ') : (process.env.POC_PROMPT || 'What is 2+2?');
+  const state = getState();
+  const clusterId = getConfig().cluster_id || (state.clusters[0] && state.clusters[0].id) || 'gatewayai-poc';
+  const { spawnSync } = require('child_process');
+  const r = spawnSync(process.execPath, [sendPath, promptText], {
+    env: { ...process.env, OPENGATEWAY_POC_ROOT: POC_ROOT, POC_CLUSTER_ID: clusterId },
+    cwd: POC_ROOT,
+    stdio: 'inherit',
+  });
+  if (r.status !== 0) process.exit(r.status);
+}
+
 const COMMANDS = {
   status: cmdStatus,
   clusters: cmdClusters,
@@ -250,6 +268,7 @@ const COMMANDS = {
   peers: cmdPeers,
   gauge: cmdGauge,
   start: cmdStart,
+  prompt: cmdPrompt,
 };
 
 function main() {
@@ -257,7 +276,7 @@ function main() {
   const fn = cmd && COMMANDS[cmd];
   if (!fn) {
     console.error('Usage: opengateway <command> [args]');
-    console.error('Commands: status, clusters, connect, disconnect, resources, eligible, peers, gauge, start');
+    console.error('Commands: status, clusters, connect, disconnect, resources, eligible, peers, gauge, start, prompt');
     console.error('Aliases:  join = connect, leave = disconnect');
     process.exit(1);
   }

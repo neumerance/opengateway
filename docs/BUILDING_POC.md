@@ -255,6 +255,49 @@ The gauge step fills CPU, RAM, GPU VRAM, disk; “eligible” is the set of clus
 
 ---
 
+## POC message format
+
+Peers in the same cluster connect over Hyperswarm (topic = hash of cluster ID). Messages on each connection use **NDJSON** (one JSON object per line, UTF-8, newline-delimited).
+
+### 1.4.1 Join / peer advertisement
+
+Discovery is via Hyperswarm only: joining the topic makes the node discoverable. No separate advertisement message is required for the POC. Optional: a node may send a `peer_announce` so others can show a friendly name:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | `"peer_announce"` |
+| `node_name` | string | Optional display name (e.g. NodeA). |
+| `peer_id` | string | Optional; Hyperswarm public key hex or similar. |
+
+### 1.4.2 Inference request and response
+
+| Message | Fields | Description |
+|---------|--------|-------------|
+| **inference_request** | `type`, `request_id`, `prompt` | Client sends this to request inference (or echo). |
+| **inference_response** | `type`, `request_id`, `response` | Server sends this back; POC may echo `prompt` as `response`. |
+
+**inference_request**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string | Yes | `"inference_request"` |
+| `request_id` | string | Yes | Opaque ID to match the response. |
+| `prompt` | string | Yes | User prompt (e.g. "What is 2+2?"). |
+
+**inference_response**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string | Yes | `"inference_response"` |
+| `request_id` | string | Yes | Same as in the request. |
+| `response` | string | Yes | Reply (POC: echo of `prompt` or stub). |
+
+### 1.4.3 request_id
+
+Included in both request and response so the sender can match responses to requests. Any opaque string (e.g. UUID) is fine.
+
+---
+
 ## Run the POC: one command per node
 
 Each **machine** (node) used for testing runs one **curl** of the install script. The script runs the [Install flow](#install-flow-what-installsh-does): install dependencies, install CLI, gauge resources, determine eligible clusters, and join the cluster (and optionally start the node process for the three-node test).
@@ -326,10 +369,10 @@ Progress checklist: phases → tasks → subtasks. Mark checkboxes as you comple
   - [ ] 1.3.2 Determine which clusters machine can join (tier rules)
   - [ ] 1.3.3 Join cluster (EXO and/or Hyperswarm) so machine is discoverable
 
-- [ ] **Task 1.4: Define POC message format**
-  - [ ] 1.4.1 Define "join cluster" / peer advertisement format
-  - [ ] 1.4.2 Define "inference_request" and "inference_response" (or echo) message format
-  - [ ] 1.4.3 Optional: define request_id for matching responses
+- [x] **Task 1.4: Define POC message format**
+  - [x] 1.4.1 Define "join cluster" / peer advertisement format
+  - [x] 1.4.2 Define "inference_request" and "inference_response" (or echo) message format
+  - [x] 1.4.3 Optional: define request_id for matching responses
 
 ---
 
