@@ -5,7 +5,6 @@
  *        Requires OPENGATEWAY_POC_ROOT and POC_CLUSTER_ID (or defaults).
  */
 
-const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 
@@ -22,7 +21,13 @@ const prompt = process.argv[2] || process.env.POC_PROMPT || 'What is 2+2?';
 const model = process.argv[3] || process.env.POC_MODEL || '';
 const request_id = crypto.randomUUID();
 
-const topic = crypto.createHash('sha256').update(CLUSTER_ID).digest();
+function topicForCluster(clusterId) {
+  const topic = Buffer.alloc(32);
+  const src = Buffer.from(String(clusterId || ''), 'utf8');
+  src.copy(topic, 0, 0, Math.min(src.length, 32));
+  return topic;
+}
+const topic = topicForCluster(CLUSTER_ID);
 
 function send(socket, obj) {
   socket.write(JSON.stringify(obj) + '\n');
