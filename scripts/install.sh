@@ -21,6 +21,7 @@ fi
 
 source_asdf() {
   [[ -f "$HOME/.asdf/asdf.sh" ]] && . "$HOME/.asdf/asdf.sh"
+  true
 }
 ensure_asdf() {
   if [[ ! -d "$HOME/.asdf" ]]; then
@@ -90,7 +91,12 @@ if [[ "$PY_MAJOR" -lt 3 ]] || { [[ "$PY_MAJOR" -eq 3 ]] && [[ "${PY_MINOR:-0}" -
   PY_VER=$(python3 -c 'import sys; v=sys.version_info; print(f"{v.major}.{v.minor}" if v.major==3 else "0")' 2>/dev/null || echo "0")
   PY_MAJOR=$(echo "$PY_VER" | cut -d. -f1)
   PY_MINOR=$(echo "$PY_VER" | cut -d. -f2)
-  [[ "$PY_MAJOR" -lt 3 ]] || { [[ "$PY_MAJOR" -eq 3 ]] && [[ "${PY_MINOR:-0}" -lt 10 ]]; } && need_python
+  if [[ "$PY_MAJOR" -lt 3 ]] || { [[ "$PY_MAJOR" -eq 3 ]] && [[ "${PY_MINOR:-0}" -lt 10 ]]; }; then
+    need_python
+  fi
+fi
+if ! command -v python3 &>/dev/null; then
+  need_python
 fi
 echo "  OK: Python $PY_VER ($(python3 -c 'import sys; print(sys.executable)' 2>/dev/null))"
 pip3 --version 2>/dev/null || { python3 -m ensurepip --user 2>/dev/null; echo "  OK: pip available"; }
