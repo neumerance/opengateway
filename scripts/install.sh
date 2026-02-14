@@ -3,7 +3,7 @@
 # Usage: curl -fsSL https://raw.githubusercontent.com/<org>/opengateway/main/scripts/install.sh | bash
 #        ./scripts/install.sh
 #
-# Phase 1: dependencies. Phase 2: CLI.
+# Phase 1: deps. Phase 2: CLI. Phase 3: gauge + poc-node.
 # EXO (exo-explore) is from source; add in a later phase if needed.
 
 set -e
@@ -20,7 +20,7 @@ else
 fi
 
 echo "=============================================="
-echo "  OpenGateway POC – Phase 1 & 2"
+echo "  OpenGateway POC – Phase 1, 2 & 3"
 echo "=============================================="
 echo "  POC root: $OPENGATEWAY_POC_ROOT"
 echo ""
@@ -142,7 +142,36 @@ echo "  OK: CLI at $OPENGATEWAY_POC_ROOT/opengateway"
 echo "  Run: $OPENGATEWAY_POC_ROOT/opengateway status"
 echo "  Or add to PATH: export PATH=\"\$PATH:$OPENGATEWAY_POC_ROOT\""
 
+# --- Phase 3: Gauge and join (poc-node) ---
 echo ""
-echo "Phase 1 (dependencies) and Phase 2 (CLI) complete. Next: Phase 3 (gauge + join)."
+echo "Phase 3: Gauge resources and node"
+if [[ -n "$REPO_ROOT" && -f "$SCRIPT_DIR/poc-node.js" ]]; then
+  cp "$SCRIPT_DIR/poc-node.js" "$OPENGATEWAY_POC_ROOT/"
+else
+  curl -fsSL -o "$OPENGATEWAY_POC_ROOT/poc-node.js" "$REPO_RAW_URL/scripts/poc-node.js" || {
+    echo "  Failed to download poc-node.js. Run from repo or set REPO_RAW_URL."
+    exit 1
+  }
+fi
+chmod +x "$OPENGATEWAY_POC_ROOT/poc-node.js"
+if [[ -n "$REPO_ROOT" && -f "$SCRIPT_DIR/node-run.sh" ]]; then
+  cp "$SCRIPT_DIR/node-run.sh" "$OPENGATEWAY_POC_ROOT/"
+else
+  curl -fsSL -o "$OPENGATEWAY_POC_ROOT/node-run.sh" "$REPO_RAW_URL/scripts/node-run.sh" || {
+    echo "  Failed to download node-run.sh. Run from repo or set REPO_RAW_URL."
+    exit 1
+  }
+fi
+chmod +x "$OPENGATEWAY_POC_ROOT/node-run.sh"
+# Gauge machine resources (Linux)
+if command -v node &>/dev/null; then
+  OPENGATEWAY_POC_ROOT="$OPENGATEWAY_POC_ROOT" node "$OPENGATEWAY_POC_ROOT/cli.js" gauge 2>/dev/null || true
+fi
+echo "  OK: poc-node.js + node-run.sh installed; resources gauged (see opengateway resources / eligible)"
+echo "  To join cluster: $OPENGATEWAY_POC_ROOT/opengateway connect <cluster-id>   # e.g. gatewayai-poc"
+echo "  Then start node: $OPENGATEWAY_POC_ROOT/node-run.sh   (or: opengateway start)"
+
+echo ""
+echo "Phase 1–3 complete. Run ./node-run.sh or 'opengateway start' to join the cluster and stay discoverable."
 echo "  POC root: $OPENGATEWAY_POC_ROOT"
 echo ""

@@ -8,6 +8,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 
 const POC_ROOT = process.env.OPENGATEWAY_POC_ROOT || path.join(process.env.HOME || process.env.USERPROFILE || '', '.opengateway-poc');
 const CONFIG_PATH = path.join(POC_ROOT, 'config.json');
@@ -60,6 +61,47 @@ function getResources() {
   return readJson(RESOURCES_PATH, null);
 }
 
+function cmdGauge() {
+  if (process.platform !== 'linux') {
+    console.error('Gauge is Linux-only for this POC.');
+    process.exit(1);
+  }
+  let cpu_cores = 0;
+  let ram_gb = 0;
+  let gpu_vram_gb = 0;
+  let disk_gb = 0;
+
+  try {
+    const cpuinfo = fs.readFileSync('/proc/cpuinfo', 'utf8');
+    const match = cpuinfo.match(/^processor\s*:\s*\d+/gm);
+    cpu_cores = match ? match.length : 0;
+  } catch (_) {}
+
+  try {
+    const meminfo = fs.readFileSync('/proc/meminfo', 'utf8');
+    const m = meminfo.match(/MemTotal:\s*(\d+)\s*kB/);
+    if (m) ram_gb = Math.floor(parseInt(m[1], 10) / 1024 / 1024);
+  } catch (_) {}
+
+  try {
+    const out = execSync('nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null', { encoding: 'utf8', maxBuffer: 4096 });
+    const values = out.trim().split(/\r?\n/).map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+    if (values.length) gpu_vram_gb = Math.floor(values.reduce((a, b) => a + b, 0) / 1024);
+  } catch (_) {}
+
+  try {
+    const out = execSync(`df -k "${POC_ROOT}" 2>/dev/null | tail -1`, { encoding: 'utf8', maxBuffer: 2048 });
+    const parts = out.trim().split(/\s+/);
+    const availK = parseInt(parts[3], 10);
+    if (!isNaN(availK)) disk_gb = Math.floor(availK / 1024 / 1024);
+  } catch (_) {}
+
+  const profile = { cpu_cores: cpu_cores || 1, ram_gb: ram_gb || 1, gpu_vram_gb: gpu_vram_gb, disk_gb: disk_gb || 1 };
+  writeJson(RESOURCES_PATH, profile);
+  console.log('Gauged:', profile);
+  console.log('Wrote', RESOURCES_PATH);
+}
+
 function cmdStatus() {
   const config = getConfig();
   const state = getState();
@@ -98,7 +140,7 @@ function cmdConnect(clusterId) {
   }
   state.clusters.push({ id: clusterId });
   setState({ clusters: state.clusters });
-  console.log('Connected to', clusterId, '(stored; actual join in Phase 3)');
+  console.log('Connected to', clusterId, '. Run "opengateway start" to join the cluster.');
 }
 
 function cmdDisconnect(clusterId) {
@@ -119,7 +161,7 @@ function cmdDisconnect(clusterId) {
 function cmdResources() {
   const r = getResources();
   if (!r) {
-    console.log('Resources not gauged. Run Phase 3 (gauge) first.');
+    console.log('Resources not gauged. Run: opengateway gauge');
     return;
   }
   console.log('CPU cores:   ', r.cpu_cores ?? r.cpu ?? '?');
@@ -131,7 +173,7 @@ function cmdResources() {
 function cmdEligible() {
   const r = getResources();
   if (!r) {
-    console.log('Resources not gauged. Run Phase 3 (gauge) first.');
+    console.log('Resources not gauged. Run: opengateway gauge');
     return;
   }
   const cpu = r.cpu_cores ?? r.cpu ?? 0;
@@ -164,6 +206,38 @@ function cmdPeers(clusterId) {
   console.log('Peers: (not available until node is running and joined)');
 }
 
+function cmdStart() {
+  const state = getState();
+  if (state.nodePid) {
+    try {
+      process.kill(state.nodePid, 0);
+      console.log('Node already running (pid ' + state.nodePid + '). Stop it first.');
+      return;
+    } catch (_) {}
+  }
+  const runScript = path.join(POC_ROOT, 'node-run.sh');
+  if (!fs.existsSync(runScript)) {
+    console.error('node-run.sh not found. Run install.sh Phase 3 first.');
+    process.exit(1);
+  }
+  const clusterId = getConfig().cluster_id || (state.clusters[0] && state.clusters[0].id) || 'gatewayai-poc';
+  if (!state.clusters.some(c => c.id === clusterId)) {
+    setState({ clusters: state.clusters.concat([{ id: clusterId }]) });
+  }
+  console.log('Starting node for cluster:', clusterId);
+  const { spawn } = require('child_process');
+  const child = spawn(runScript, [], {
+    env: { ...process.env, OPENGATEWAY_POC_ROOT: POC_ROOT, POC_CLUSTER_ID: clusterId },
+    stdio: 'inherit',
+    cwd: POC_ROOT,
+  });
+  setState({ nodePid: child.pid });
+  child.on('exit', (code) => {
+    setState({ nodePid: null });
+    if (code !== 0 && code !== null) process.exitCode = code;
+  });
+}
+
 const COMMANDS = {
   status: cmdStatus,
   clusters: cmdClusters,
@@ -174,6 +248,8 @@ const COMMANDS = {
   resources: cmdResources,
   eligible: cmdEligible,
   peers: cmdPeers,
+  gauge: cmdGauge,
+  start: cmdStart,
 };
 
 function main() {
@@ -181,7 +257,7 @@ function main() {
   const fn = cmd && COMMANDS[cmd];
   if (!fn) {
     console.error('Usage: opengateway <command> [args]');
-    console.error('Commands: status, clusters, connect, disconnect, resources, eligible, peers');
+    console.error('Commands: status, clusters, connect, disconnect, resources, eligible, peers, gauge, start');
     console.error('Aliases:  join = connect, leave = disconnect');
     process.exit(1);
   }
