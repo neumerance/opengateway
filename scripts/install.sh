@@ -54,6 +54,13 @@ echo "  OK: $(curl -sV 2>/dev/null | head -1 || true)"
 
 # --- 2. Python 3.10+ and pip (prefer asdf) ---
 echo "[2/5] Python 3.10+ and pip"
+# Git is required to clone asdf; install it now if missing
+if ! command -v git &>/dev/null; then
+  echo "  Git not found. Installing (required for asdf)..."
+  sudo apt-get update -qq
+  sudo apt-get install -y git
+fi
+command -v git &>/dev/null || { echo "  WARN: git still missing; asdf will be skipped, using apt for Python/Node"; }
 need_python() {
   echo "  Python 3.10+ required. Install with:"
   echo "    asdf plugin add python && asdf install python 3.12 && asdf global python 3.12.x"
