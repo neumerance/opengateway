@@ -179,14 +179,50 @@ for f in cli.js poc-node.js node-run.sh send-prompt.js; do
   else
     curl -fsSL -o "$OPENGATEWAY_POC_ROOT/$f" "$REPO_RAW_URL/scripts/$f"
   fi
-  chmod +x "$OPENGATEWAY_POC_ROOT/$f" || true
+  if [[ "$f" == *.js || "$f" == *.sh ]]; then
+    chmod +x "$OPENGATEWAY_POC_ROOT/$f" || true
+  fi
 done
+if [[ -n "$REPO_ROOT" && -f "$SCRIPT_DIR/cluster-registry.json" ]]; then
+  cp "$SCRIPT_DIR/cluster-registry.json" "$OPENGATEWAY_POC_ROOT/cluster-registry.json"
+else
+  if ! curl -fsSL -o "$OPENGATEWAY_POC_ROOT/cluster-registry.json" "$REPO_RAW_URL/scripts/cluster-registry.json"; then
+    cat > "$OPENGATEWAY_POC_ROOT/cluster-registry.json" << REGISTRY
+{
+  "version": 1,
+  "clusters": {
+    "us-east-1": {
+      "SmolLM-360M": "cluster-us-east-1-smollm-360m",
+      "Qwen2-0.5B": "cluster-us-east-1-qwen2-0_5b",
+      "SmolLM-1.7B": "cluster-us-east-1-smollm-1_7b",
+      "TinyLlama-1.1B": "cluster-us-east-1-tinyllama-1_1b",
+      "Phi-2-2.7B": "cluster-us-east-1-phi-2-2_7b",
+      "Llama-3.2-1.5B": "cluster-us-east-1-llama-3_2-1_5b",
+      "Llama-3.2-3B": "cluster-us-east-1-llama-3_2-3b",
+      "Llama-3.1-8B": "cluster-us-east-1-llama-3_1-8b",
+      "Llama-3.1-70B": "cluster-us-east-1-llama-3_1-70b",
+      "Llama-3.1-405B": "cluster-us-east-1-llama-3_1-405b"
+    }
+  }
+}
+REGISTRY
+    echo "  WARN: cluster-registry.json not found at $REPO_RAW_URL; wrote local fallback."
+  fi
+fi
 cat > "$OPENGATEWAY_POC_ROOT/opengateway" << WRAP
 #!/usr/bin/env bash
 export OPENGATEWAY_POC_ROOT="$OPENGATEWAY_POC_ROOT"
 exec node "$OPENGATEWAY_POC_ROOT/cli.js" "\$@"
 WRAP
 chmod +x "$OPENGATEWAY_POC_ROOT/opengateway"
+if [[ ! -f "$OPENGATEWAY_POC_ROOT/config.json" ]]; then
+  cat > "$OPENGATEWAY_POC_ROOT/config.json" << CFG
+{
+  "cluster_registry_url": "$REPO_RAW_URL/scripts/cluster-registry.json",
+  "region": "us-east-1"
+}
+CFG
+fi
 [[ -f "$OPENGATEWAY_POC_ROOT/state.json" ]] || echo '{"clusters":[],"nodePid":null}' > "$OPENGATEWAY_POC_ROOT/state.json"
 echo "  OK: CLI files installed to $OPENGATEWAY_POC_ROOT"
 

@@ -13,17 +13,28 @@ const http = require('http');
 const https = require('https');
 
 const POC_ROOT = process.env.OPENGATEWAY_POC_ROOT || path.join(process.env.HOME || '', '.opengateway-poc');
-const CLUSTER_ID = process.env.POC_CLUSTER_ID || (() => {
+const PEERS_PATH = path.join(POC_ROOT, 'peers.json');
+function resolveClusterIds() {
+  const fromEnvList = (process.env.POC_CLUSTER_IDS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (fromEnvList.length > 0) return fromEnvList;
+  const fromEnvSingle = (process.env.POC_CLUSTER_ID || '').trim();
+  if (fromEnvSingle) return [fromEnvSingle];
   try {
     const config = JSON.parse(fs.readFileSync(path.join(POC_ROOT, 'config.json'), 'utf8'));
-    if (config.cluster_id) return config.cluster_id;
+    if (config.cluster_id) return [config.cluster_id];
   } catch (_) {}
   try {
     const state = JSON.parse(fs.readFileSync(path.join(POC_ROOT, 'state.json'), 'utf8'));
-    if (state.clusters && state.clusters[0]) return state.clusters[0].id;
+    if (state.clusters && state.clusters.length > 0) {
+      return state.clusters.map((c) => c.id).filter(Boolean);
+    }
   } catch (_) {}
-  return 'gatewayai-poc';
-})();
+  return ['gatewayai-poc'];
+}
+const CLUSTER_IDS = resolveClusterIds();
 
 const NODE_NAME = process.env.NODE_NAME || 'node';
 const POC_INFERENCE_BACKEND = (process.env.POC_INFERENCE_BACKEND || 'auto').toLowerCase(); // auto | ollama | echo
@@ -36,8 +47,53 @@ const SUPPORTED_MODELS = (process.env.POC_SUPPORTED_MODELS || '')
 const MODEL_RUNTIME_MAP = {
   'SmolLM-360M': 'llama3.2:1b',
 };
+const peers = new Map();
 
-const topic = crypto.createHash('sha256').update(CLUSTER_ID).digest();
+function topicForCluster(clusterId) {
+  // Use plain clusterId bytes (padded/truncated) instead of hashing.
+  const topic = Buffer.alloc(32);
+  const src = Buffer.from(String(clusterId || ''), 'utf8');
+  src.copy(topic, 0, 0, Math.min(src.length, 32));
+  return topic;
+}
+
+function decodeTopic(topic) {
+  if (!Buffer.isBuffer(topic)) return '';
+  return topic.toString('utf8').replace(/\0+$/g, '').trim();
+}
+
+function extractPeerClusters(info) {
+  const clusters = [];
+  if (info && Buffer.isBuffer(info.topic)) {
+    const id = decodeTopic(info.topic);
+    if (id) clusters.push(id);
+  }
+  if (info && Array.isArray(info.topics)) {
+    for (const t of info.topics) {
+      if (Buffer.isBuffer(t)) {
+        const id = decodeTopic(t);
+        if (id) clusters.push(id);
+        continue;
+      }
+      if (t && Buffer.isBuffer(t.topic)) {
+        const id = decodeTopic(t.topic);
+        if (id) clusters.push(id);
+      }
+    }
+  }
+  return Array.from(new Set(clusters));
+}
+
+function writePeersFile() {
+  try {
+    fs.mkdirSync(POC_ROOT, { recursive: true });
+    const out = {
+      updated_at: new Date().toISOString(),
+      peers: Array.from(peers.values()),
+    };
+    fs.writeFileSync(PEERS_PATH, JSON.stringify(out, null, 2) + '\n');
+  } catch (_) {}
+}
 
 function send(socket, obj) {
   try {
@@ -155,8 +211,24 @@ function handleInferenceRequest(msg, socket) {
 }
 
 function setupConnection(socket, info) {
-  const key = info.publicKey ? info.publicKey.toString('hex').slice(0, 16) : '?';
-  console.log('[peer] connected', key);
+  const peerId = info.publicKey ? info.publicKey.toString('hex') : '?';
+  const key = peerId.slice(0, 16);
+  const clusters = extractPeerClusters(info);
+  peers.set(peerId, {
+    peer_id: peerId,
+    node_name: 'unknown',
+    clusters,
+    connected_at: new Date().toISOString(),
+    last_seen_at: new Date().toISOString(),
+  });
+  writePeersFile();
+  console.log('[peer] connected', key, clusters.length ? `clusters=${clusters.join(',')}` : '');
+  send(socket, {
+    type: 'peer_hello',
+    node_name: NODE_NAME,
+    clusters: CLUSTER_IDS,
+    supported_models: SUPPORTED_MODELS,
+  });
   let buf = '';
   socket.setEncoding('utf8');
   socket.on('data', (chunk) => {
@@ -167,6 +239,25 @@ function setupConnection(socket, info) {
       if (!line.trim()) continue;
       try {
         const msg = JSON.parse(line);
+        if (msg.type === 'peer_hello') {
+          const current = peers.get(peerId) || {
+            peer_id: peerId,
+            node_name: 'unknown',
+            clusters: [],
+            connected_at: new Date().toISOString(),
+          };
+          const announcedClusters = Array.isArray(msg.clusters)
+            ? msg.clusters.map((c) => String(c).trim()).filter(Boolean)
+            : current.clusters;
+          peers.set(peerId, {
+            ...current,
+            node_name: msg.node_name ? String(msg.node_name) : current.node_name,
+            clusters: Array.from(new Set(announcedClusters)),
+            last_seen_at: new Date().toISOString(),
+          });
+          writePeersFile();
+          continue;
+        }
         if (msg.type === 'inference_request' && msg.request_id != null && msg.prompt != null) {
           handleInferenceRequest(msg, socket);
         }
@@ -174,25 +265,36 @@ function setupConnection(socket, info) {
     }
   });
   socket.on('error', () => {});
-  socket.on('close', () => {});
+  socket.on('close', () => {
+    peers.delete(peerId);
+    writePeersFile();
+  });
 }
 
 async function main() {
   const Hyperswarm = require('hyperswarm');
   const swarm = new Hyperswarm();
+  writePeersFile();
 
   swarm.on('connection', (socket, info) => setupConnection(socket, info));
 
-  const discovery = swarm.join(topic, { server: true, client: true });
-  await discovery.flushed();
-  console.log('Joined cluster:', CLUSTER_ID, '(' + NODE_NAME + ')');
+  const discoveries = CLUSTER_IDS.map((clusterId) => swarm.join(topicForCluster(clusterId), { server: true, client: true }));
+  for (const d of discoveries) {
+    // eslint-disable-next-line no-await-in-loop
+    await d.flushed();
+  }
+  console.log('Joined clusters:', CLUSTER_IDS.join(', '), '(' + NODE_NAME + ')');
   console.log('Inference backend:', POC_INFERENCE_BACKEND, `(ollama=${OLLAMA_URL}, model=${OLLAMA_MODEL})`);
   if (SUPPORTED_MODELS.length > 0) {
     console.log('Supported models:', SUPPORTED_MODELS.join(', '));
   }
 
   const shutdown = () => {
-    discovery.destroy().then(() => process.exit(0)).catch(() => process.exit(0));
+    peers.clear();
+    writePeersFile();
+    Promise.all(discoveries.map((d) => d.destroy().catch(() => {})))
+      .then(() => process.exit(0))
+      .catch(() => process.exit(0));
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);

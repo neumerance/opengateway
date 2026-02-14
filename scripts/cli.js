@@ -14,6 +14,8 @@ const POC_ROOT = process.env.OPENGATEWAY_POC_ROOT || path.join(process.env.HOME 
 const CONFIG_PATH = path.join(POC_ROOT, 'config.json');
 const STATE_PATH = path.join(POC_ROOT, 'state.json');
 const RESOURCES_PATH = path.join(POC_ROOT, 'resources.json');
+const REGISTRY_PATH = path.join(POC_ROOT, 'cluster-registry.json');
+const PEERS_PATH = path.join(POC_ROOT, 'peers.json');
 
 // Resource tiers: real LLM model classes. Machine must meet min CPU, RAM, GPU VRAM (GB), disk (GB).
 const TIERS = [
@@ -59,6 +61,38 @@ function setState(update) {
 
 function getResources() {
   return readJson(RESOURCES_PATH, null);
+}
+
+function getNodeRegion() {
+  const config = getConfig();
+  return process.env.POC_REGION || process.env.NODE_REGION || config.region || 'us-east-1';
+}
+
+function fetchClusterRegistry() {
+  const config = getConfig();
+  const registryUrl = process.env.CLUSTER_REGISTRY_URL || config.cluster_registry_url || '';
+  if (registryUrl) {
+    try {
+      const out = execSync(`curl -fsSL "${registryUrl}"`, { encoding: 'utf8', maxBuffer: 1024 * 1024 });
+      return JSON.parse(out);
+    } catch (_) {
+      return null;
+    }
+  }
+  return readJson(REGISTRY_PATH, null);
+}
+
+function deriveClusterIdsFromRegistry(supportedModels) {
+  const registry = fetchClusterRegistry();
+  if (!registry || typeof registry.clusters !== 'object' || Array.isArray(registry.clusters)) return [];
+  const nodeRegion = getNodeRegion();
+  const regionClusters = registry.clusters[nodeRegion];
+  if (!regionClusters || typeof regionClusters !== 'object' || Array.isArray(regionClusters)) return [];
+  const selected = supportedModels
+    .map((modelId) => regionClusters[modelId])
+    .filter((id) => typeof id === 'string' && id.trim() !== '')
+    .map((id) => id.trim());
+  return Array.from(new Set(selected));
 }
 
 function getEligibleTierIds(resources) {
@@ -127,7 +161,6 @@ function cmdStatus() {
   }
   console.log('POC root:    ', POC_ROOT);
   console.log('Node:        ', nodeRunning ? `running (pid ${state.nodePid})` : 'not running');
-  console.log('Cluster ID:  ', config.cluster_id || '(none)');
   console.log('Node name:   ', config.node_name || '(auto)');
   console.log('Clusters:    ', state.clusters.length ? state.clusters.map(c => c.id).join(', ') : 'none');
   if (state.runtime && (state.runtime.backend || state.runtime.model)) {
@@ -214,7 +247,20 @@ function cmdPeers(clusterId) {
     console.log('Not connected to', cluster);
     return;
   }
-  console.log('Peers: (not available until node is running and joined)');
+  const peersState = readJson(PEERS_PATH, { peers: [] });
+  const peers = Array.isArray(peersState.peers) ? peersState.peers : [];
+  const peersInCluster = peers.filter((p) => Array.isArray(p.clusters) && p.clusters.includes(cluster));
+  if (peersInCluster.length === 0) {
+    console.log('No peers currently visible in', cluster);
+    return;
+  }
+  console.log(`Peers in ${cluster} (${peersInCluster.length}):`);
+  peersInCluster.forEach((p) => {
+    const id = p.peer_id ? String(p.peer_id).slice(0, 16) : '?';
+    const name = p.node_name ? String(p.node_name) : 'unknown';
+    const seen = p.last_seen_at ? ` last_seen=${p.last_seen_at}` : '';
+    console.log(`- ${id} (${name})${seen}`);
+  });
 }
 
 function cmdStart() {
@@ -231,13 +277,21 @@ function cmdStart() {
     console.error('node-run.sh not found. Run install.sh Phase 3 first.');
     process.exit(1);
   }
-  const clusterId = getConfig().cluster_id || (state.clusters[0] && state.clusters[0].id) || 'gatewayai-poc';
-  if (!state.clusters.some(c => c.id === clusterId)) {
-    setState({ clusters: state.clusters.concat([{ id: clusterId }]) });
-  }
+  let clusterIds = state.clusters.map((c) => c.id).filter(Boolean);
+  const config = getConfig();
+  if (clusterIds.length === 0 && config.cluster_id) clusterIds = [config.cluster_id];
+  if (clusterIds.length === 0) clusterIds = ['gatewayai-poc'];
   // Always refresh resources and model eligibility before starting the node.
   cmdGauge();
   const eligible = getEligibleTierIds(getResources());
+  const derivedClusterIds = deriveClusterIdsFromRegistry(eligible);
+  if (derivedClusterIds.length > 0) {
+    clusterIds = derivedClusterIds;
+  }
+  clusterIds = Array.from(new Set(clusterIds.filter(Boolean)));
+  if (clusterIds.length === 0) clusterIds = ['gatewayai-poc'];
+  setState({ clusters: clusterIds.map((id) => ({ id })) });
+  console.log('Mapped cluster IDs:', clusterIds.join(', '));
   setState({ supportedModels: eligible });
   if (eligible.length === 0) {
     console.log('Eligible models: none');
@@ -289,7 +343,7 @@ function cmdStart() {
   }
 
   setState({ runtime: { backend, model } });
-  console.log('Starting node daemon for cluster:', clusterId);
+  console.log('Starting node daemon for clusters:', clusterIds.join(', '));
   const { spawn } = require('child_process');
   const logsDir = path.join(POC_ROOT, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
@@ -299,7 +353,8 @@ function cmdStart() {
     env: {
       ...process.env,
       OPENGATEWAY_POC_ROOT: POC_ROOT,
-      POC_CLUSTER_ID: clusterId,
+      POC_CLUSTER_ID: clusterIds[0],
+      POC_CLUSTER_IDS: clusterIds.join(','),
       POC_SUPPORTED_MODELS: eligible.join(','),
       POC_INFERENCE_BACKEND: backend,
       OLLAMA_MODEL: model,

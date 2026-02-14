@@ -38,3 +38,96 @@
 
 ## How It Works
 
+At a high level, a node measures local machine resources, maps supported models, resolves cluster IDs for its region, and joins those clusters over Hyperswarm.
+
+## Setup and Run a Node
+
+### 1) Install on Linux
+
+On a Linux machine (VPS or home), run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/neumerance/opengateway/main/scripts/install.sh | REPO_RAW_URL=https://raw.githubusercontent.com/neumerance/opengateway/main bash
+```
+
+This installs:
+- Python/Node/Ollama dependencies
+- OpenGateway CLI (`opengateway`)
+- Node runtime files in `~/.opengateway-poc/`
+
+### 2) Configure region (important)
+
+Set node region in `~/.opengateway-poc/config.json` to your AWS-style region code (keep any existing keys such as `cluster_registry_url`), for example:
+
+```json
+{
+  "region": "us-east-1"
+}
+```
+
+Cluster mapping uses:
+- `region`
+- node supported models (from resource gauge)
+- cluster registry mapping (`clusters.<region>.<model>`)
+
+### 3) Start the node
+
+```bash
+opengateway start
+```
+
+`start` and `restart` automatically:
+- gauge system resources
+- determine eligible models
+- map cluster IDs from registry
+- run node as daemon and join mapped clusters
+
+### 4) Check status and cluster mapping
+
+```bash
+opengateway status
+```
+
+Look for:
+- `Clusters:` mapped cluster IDs
+- `Models:` supported model tiers
+- `Node: running (pid ...)`
+
+### 5) See peers in a cluster
+
+```bash
+opengateway peers <cluster-id>
+```
+
+If omitted, `opengateway peers` uses your default/first connected cluster.
+
+### 6) Run a prompt
+
+One-shot:
+
+```bash
+opengateway prompt "What is 2+2?"
+```
+
+Interactive:
+
+```bash
+opengateway prompt
+```
+
+### 7) Restart / stop
+
+```bash
+opengateway restart
+opengateway stop
+```
+
+## Multi-node quick check (NodeA + NodeB)
+
+1. Install on both nodes.
+2. Use the same `region` in both configs.
+3. Run `opengateway restart` on both.
+4. On either node, run `opengateway status` and confirm overlapping cluster IDs.
+5. Run `opengateway peers <cluster-id>` to confirm peer visibility.
+
+For deeper implementation details, see `docs/BUILDING_POC.md` and `docs/architecture/CLUSTER_DISCOVERY_FLOW.md`.
