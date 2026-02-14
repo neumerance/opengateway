@@ -90,6 +90,15 @@ install_node_system() {
   return 1
 }
 
+install_ollama_system() {
+  if command -v ollama &>/dev/null; then
+    return 0
+  fi
+  # Official installer script (Linux)
+  curl -fsSL https://ollama.com/install.sh | run_as_root sh
+  command -v ollama &>/dev/null
+}
+
 echo "[1/8] Ensure curl"
 if ! command -v curl &>/dev/null; then
   if [[ -f /etc/debian_version ]]; then
@@ -146,7 +155,13 @@ if [[ "$(node_major)" -lt 18 ]]; then
 fi
 echo "  OK: Node $(node -v), npm $(npm -v)"
 
-echo "[4/8] Install POC dependencies"
+echo "[4/9] Install Ollama"
+if ! command -v ollama &>/dev/null; then
+  install_ollama_system || { echo "  FAILED: could not install ollama."; exit 1; }
+fi
+echo "  OK: Ollama $(ollama --version 2>/dev/null || echo installed)"
+
+echo "[5/9] Install POC dependencies"
 mkdir -p "$OPENGATEWAY_POC_ROOT"
 cd "$OPENGATEWAY_POC_ROOT"
 if [[ -n "$REPO_ROOT" && -f "$SCRIPT_DIR/package.json" ]]; then
@@ -157,7 +172,7 @@ fi
 npm install --silent --no-fund --no-audit 2>/dev/null || npm install --no-fund --no-audit
 echo "  OK: Hyperswarm installed"
 
-echo "[5/8] Install OpenGateway CLI files"
+echo "[6/9] Install OpenGateway CLI files"
 for f in cli.js poc-node.js node-run.sh send-prompt.js; do
   if [[ -n "$REPO_ROOT" && -f "$SCRIPT_DIR/$f" ]]; then
     cp "$SCRIPT_DIR/$f" "$OPENGATEWAY_POC_ROOT/"
@@ -175,7 +190,7 @@ chmod +x "$OPENGATEWAY_POC_ROOT/opengateway"
 [[ -f "$OPENGATEWAY_POC_ROOT/state.json" ]] || echo '{"clusters":[],"nodePid":null}' > "$OPENGATEWAY_POC_ROOT/state.json"
 echo "  OK: CLI files installed to $OPENGATEWAY_POC_ROOT"
 
-echo "[6/8] Install CLI to machine bin dir"
+echo "[7/9] Install CLI to machine bin dir"
 if [[ -w /usr/local/bin ]]; then
   BIN_DIR="/usr/local/bin"
 else
@@ -190,14 +205,14 @@ BINWRAP
 chmod +x "$BIN_DIR/opengateway"
 echo "  OK: CLI in $BIN_DIR/opengateway"
 
-echo "[7/8] Include CLI bin dir in machine PATH"
+echo "[8/9] Include CLI bin dir in machine PATH"
 append_if_missing "$PROFILE_HOME/.profile" "$BIN_DIR" "export PATH=\"$BIN_DIR:\$PATH\""
 append_if_missing "$PROFILE_HOME/.bashrc" "$BIN_DIR" "export PATH=\"$BIN_DIR:\$PATH\""
 [[ -f "$PROFILE_HOME/.zshrc" ]] && append_if_missing "$PROFILE_HOME/.zshrc" "$BIN_DIR" "export PATH=\"$BIN_DIR:\$PATH\""
 export PATH="$BIN_DIR:$PATH"
 echo "  OK: PATH updated"
 
-echo "[8/8] Gauge resources"
+echo "[9/9] Gauge resources"
 OPENGATEWAY_POC_ROOT="$OPENGATEWAY_POC_ROOT" node "$OPENGATEWAY_POC_ROOT/cli.js" gauge 2>/dev/null || true
 
 echo ""

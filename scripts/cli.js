@@ -366,7 +366,6 @@ async function cmdPrompt(...args) {
   }
   const state = getState();
   const clusterId = getConfig().cluster_id || (state.clusters[0] && state.clusters[0].id) || 'gatewayai-poc';
-  if (!model && state.runtime && state.runtime.model) model = state.runtime.model;
 
   // One-shot mode
   if (parts.length > 0) {
@@ -380,7 +379,11 @@ async function cmdPrompt(...args) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   console.log('Interactive chat mode. Type /exit to quit.');
   console.log('Commands: /model <model-id> to switch model in this session.');
-  if (model) console.log('Current model:', model);
+  if (model) {
+    console.log('Current model:', model);
+  } else if (state.runtime && state.runtime.model) {
+    console.log('Current model:', state.runtime.model, '(node default)');
+  }
 
   for await (const line of rl) {
     const input = String(line || '').trim();

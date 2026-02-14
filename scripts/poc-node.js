@@ -33,6 +33,9 @@ const SUPPORTED_MODELS = (process.env.POC_SUPPORTED_MODELS || '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
+const MODEL_RUNTIME_MAP = {
+  'SmolLM-360M': 'llama3.2:1b',
+};
 
 const topic = crypto.createHash('sha256').update(CLUSTER_ID).digest();
 
@@ -100,11 +103,19 @@ async function inferWithOllama(prompt, model) {
 }
 
 async function inferPrompt(prompt, model) {
-  const requestedModel = model ? String(model) : '';
-  if (SUPPORTED_MODELS.length > 0 && requestedModel && !SUPPORTED_MODELS.includes(requestedModel)) {
-    throw new Error(`model "${requestedModel}" not supported by this node (supported: ${SUPPORTED_MODELS.join(', ')})`);
+  let selected = model ? String(model) : '';
+  if (!selected && SUPPORTED_MODELS.length > 0) {
+    selected = SUPPORTED_MODELS[0];
   }
-  const chosenModel = requestedModel || OLLAMA_MODEL;
+  if (
+    SUPPORTED_MODELS.length > 0 &&
+    selected &&
+    !SUPPORTED_MODELS.includes(selected) &&
+    selected !== OLLAMA_MODEL
+  ) {
+    selected = SUPPORTED_MODELS[0];
+  }
+  const chosenModel = MODEL_RUNTIME_MAP[selected] || selected || OLLAMA_MODEL;
   if (POC_INFERENCE_BACKEND === 'echo') {
     return { text: '[echo] ' + String(prompt), backend: 'echo' };
   }
