@@ -65,9 +65,29 @@ pip3 --version 2>/dev/null || { python3 -m ensurepip --user 2>/dev/null; echo " 
 echo "[3/5] EXO"
 echo "  Skip: EXO (exo-explore) is installed from source; add in a later phase. POC discovery uses Hyperswarm first."
 
-# --- 4. Node.js 18+ and npm ---
+# --- 4. Node.js 18+ and npm (prefer asdf) ---
 echo "[4/5] Node.js 18+ and npm"
+source_asdf() {
+  [[ -f "$HOME/.asdf/asdf.sh" ]] && . "$HOME/.asdf/asdf.sh"
+}
 install_node_linux() {
+  # Prefer asdf: install if missing, then use for Node
+  if [[ ! -d "$HOME/.asdf" ]]; then
+    echo "  Installing asdf..."
+    git clone https://github.com/asdf-vm/asdf.git "$HOME/.asdf" --branch v0.14.0 2>/dev/null || \
+    git clone https://github.com/asdf-vm/asdf.git "$HOME/.asdf" --branch v0.13.1 2>/dev/null || return 1
+    source_asdf
+  fi
+  if [[ -f "$HOME/.asdf/asdf.sh" ]]; then
+    source_asdf
+    asdf plugin add nodejs 2>/dev/null || true
+    asdf install nodejs 20.18.0 2>/dev/null || asdf install nodejs latest 2>/dev/null || return 1
+    INSTALLED=$(asdf list nodejs 2>/dev/null | grep -E '^  20\.' | tail -1 | xargs)
+    [[ -z "$INSTALLED" ]] && INSTALLED=$(asdf list nodejs 2>/dev/null | tail -1 | xargs)
+    asdf global nodejs "${INSTALLED:-20.18.0}" 2>/dev/null || true
+    source_asdf
+    command -v node &>/dev/null && return 0
+  fi
   if command -v fnm &>/dev/null; then
     eval "$(fnm env)" 2>/dev/null || true
     fnm install 20
@@ -86,22 +106,37 @@ install_node_linux() {
   fi
   return 1
 }
+source_asdf
 if ! command -v node &>/dev/null; then
-  echo "  Node not found. Installing..."
+  echo "  Node not found. Installing (using asdf when possible)..."
   if ! install_node_linux; then
-    echo "  Install Node 18+ manually: https://nodejs.org or fnm / nvm"
+    echo ""
+    echo "  FAILED: Could not install Node.js automatically."
+    echo "  Install Node 18+ manually, then re-run this script:"
+    echo "    asdf plugin add nodejs && asdf install nodejs 20 && asdf global nodejs 20.x.x"
+    echo "  Or: sudo apt-get update && sudo apt-get install -y nodejs npm"
+    echo ""
     exit 1
   fi
+  source_asdf
 fi
 NODE_VER=$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo "0")
 if [[ "${NODE_VER:-0}" -lt 18 ]]; then
   echo "  Node 18+ required; found $(node -v). Installing Node 20..."
-  install_node_linux || exit 1
+  if ! install_node_linux; then
+    echo ""
+    echo "  FAILED: Could not upgrade Node. Install Node 18+ manually, then re-run this script."
+    echo "    asdf install nodejs 20 && asdf global nodejs 20.x.x"
+    echo ""
+    exit 1
+  fi
+  source_asdf
 fi
 echo "  OK: Node $(node -v), npm $(npm -v 2>/dev/null)"
 
 # --- 5. POC root and Hyperswarm ---
 echo "[5/5] POC root and Hyperswarm"
+source_asdf
 mkdir -p "$OPENGATEWAY_POC_ROOT"
 cd "$OPENGATEWAY_POC_ROOT"
 if [[ -n "$REPO_ROOT" && -f "$SCRIPT_DIR/package.json" ]]; then
