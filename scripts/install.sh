@@ -19,6 +19,18 @@ else
   REPO_ROOT=""
 fi
 
+source_asdf() {
+  [[ -f "$HOME/.asdf/asdf.sh" ]] && . "$HOME/.asdf/asdf.sh"
+}
+ensure_asdf() {
+  if [[ ! -d "$HOME/.asdf" ]]; then
+    command -v git &>/dev/null || return 1
+    git clone https://github.com/asdf-vm/asdf.git "$HOME/.asdf" --branch v0.14.0 2>/dev/null || \
+    git clone https://github.com/asdf-vm/asdf.git "$HOME/.asdf" --branch v0.13.1 2>/dev/null || return 1
+  fi
+  [[ -f "$HOME/.asdf/asdf.sh" ]]
+}
+
 echo "=============================================="
 echo "  OpenGateway POC – Phase 1, 2 & 3"
 echo "=============================================="
@@ -39,24 +51,46 @@ if ! command -v curl &>/dev/null; then
 fi
 echo "  OK: $(curl -sV 2>/dev/null | head -1 || true)"
 
-# --- 2. Python 3.10+ and pip ---
+# --- 2. Python 3.10+ and pip (prefer asdf) ---
 echo "[2/5] Python 3.10+ and pip"
 need_python() {
   echo "  Python 3.10+ required. Install with:"
-  echo "    sudo apt-get update && sudo apt-get install -y python3 python3-pip python3-venv"
-  echo "  or (Ubuntu 22.04+): python3 is usually 3.10+."
+  echo "    asdf plugin add python && asdf install python 3.12 && asdf global python 3.12.x"
+  echo "  Or: sudo apt-get update && sudo apt-get install -y python3 python3-pip python3-venv"
   exit 1
 }
-if ! command -v python3 &>/dev/null; then
-  echo "  Python3 not found. Installing..."
+install_python_linux() {
+  if ensure_asdf; then
+    source_asdf
+    asdf plugin add python 2>/dev/null || true
+    asdf install python 3.12.0 2>/dev/null || asdf install python 3.11.0 2>/dev/null || asdf install python 3.10.0 2>/dev/null || return 1
+    PY_INSTALLED=$(asdf list python 2>/dev/null | grep -E '^  3\.(1[0-2]|[0-9]+)' | tail -1 | xargs)
+    [[ -z "$PY_INSTALLED" ]] && PY_INSTALLED=$(asdf list python 2>/dev/null | tail -1 | xargs)
+    asdf global python "${PY_INSTALLED:-3.12.0}" 2>/dev/null || true
+    source_asdf
+    command -v python3 &>/dev/null && return 0
+  fi
+  echo "  Falling back to apt..."
   sudo apt-get update -qq
   sudo apt-get install -y python3 python3-pip python3-venv
+  return 0
+}
+if ! command -v python3 &>/dev/null; then
+  echo "  Python3 not found. Installing (using asdf when possible)..."
+  install_python_linux
 fi
+source_asdf
 PY_VER=$(python3 -c 'import sys; v=sys.version_info; print(f"{v.major}.{v.minor}" if v.major==3 else "0")' 2>/dev/null || echo "0")
 PY_MAJOR=$(echo "$PY_VER" | cut -d. -f1)
 PY_MINOR=$(echo "$PY_VER" | cut -d. -f2)
 if [[ "$PY_MAJOR" -lt 3 ]] || { [[ "$PY_MAJOR" -eq 3 ]] && [[ "${PY_MINOR:-0}" -lt 10 ]]; }; then
-  need_python
+  echo "  Python 3.10+ required; found $PY_VER. Installing..."
+  install_python_linux
+  source_asdf
+  PY_VER=$(python3 -c 'import sys; v=sys.version_info; print(f"{v.major}.{v.minor}" if v.major==3 else "0")' 2>/dev/null || echo "0")
+  PY_MAJOR=$(echo "$PY_VER" | cut -d. -f1)
+  PY_MINOR=$(echo "$PY_VER" | cut -d. -f2)
+  [[ "$PY_MAJOR" -lt 3 ]] || { [[ "$PY_MAJOR" -eq 3 ]] && [[ "${PY_MINOR:-0}" -lt 10 ]]; } && need_python
 fi
 echo "  OK: Python $PY_VER ($(python3 -c 'import sys; print(sys.executable)' 2>/dev/null))"
 pip3 --version 2>/dev/null || { python3 -m ensurepip --user 2>/dev/null; echo "  OK: pip available"; }
@@ -67,17 +101,8 @@ echo "  Skip: EXO (exo-explore) is installed from source; add in a later phase. 
 
 # --- 4. Node.js 18+ and npm (prefer asdf) ---
 echo "[4/5] Node.js 18+ and npm"
-source_asdf() {
-  [[ -f "$HOME/.asdf/asdf.sh" ]] && . "$HOME/.asdf/asdf.sh"
-}
 install_node_linux() {
-  # Prefer asdf: install if missing, then use for Node
-  if [[ ! -d "$HOME/.asdf" ]]; then
-    echo "  Installing asdf..."
-    git clone https://github.com/asdf-vm/asdf.git "$HOME/.asdf" --branch v0.14.0 2>/dev/null || \
-    git clone https://github.com/asdf-vm/asdf.git "$HOME/.asdf" --branch v0.13.1 2>/dev/null || return 1
-    source_asdf
-  fi
+  ensure_asdf || true
   if [[ -f "$HOME/.asdf/asdf.sh" ]]; then
     source_asdf
     asdf plugin add nodejs 2>/dev/null || true
