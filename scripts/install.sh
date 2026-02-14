@@ -225,11 +225,27 @@ add_path_to_shell() {
   echo "$line" >> "$file"
   echo "  Added POC root to PATH in $file"
 }
+# Add asdf to shell config so python/node from asdf are on PATH in new shells
+add_asdf_to_shell() {
+  local file="$1"
+  [[ ! -f "$file" ]] && return
+  [[ ! -f "$HOME/.asdf/asdf.sh" ]] && return
+  if grep -qF '.asdf/asdf.sh' "$file" 2>/dev/null; then
+    return
+  fi
+  echo "" >> "$file"
+  echo "# asdf (Python/Node version manager)" >> "$file"
+  echo '. "$HOME/.asdf/asdf.sh"' >> "$file"
+  echo "  Added asdf to $file"
+}
 PROFILE_HOME="${HOME:-/root}"
 [[ ! -f "$PROFILE_HOME/.profile" ]] && touch "$PROFILE_HOME/.profile"
 add_path_to_shell "$PROFILE_HOME/.profile"
 add_path_to_shell "$PROFILE_HOME/.bashrc"
 [[ -f "$PROFILE_HOME/.zshrc" ]] && add_path_to_shell "$PROFILE_HOME/.zshrc"
+add_asdf_to_shell "$PROFILE_HOME/.profile"
+add_asdf_to_shell "$PROFILE_HOME/.bashrc"
+[[ -f "$PROFILE_HOME/.zshrc" ]] && add_asdf_to_shell "$PROFILE_HOME/.zshrc"
 
 # Optional: install wrapper into ~/.local/bin so "opengateway" is on PATH
 BIN_DIR="${OPENGATEWAY_BIN_DIR:-${HOME:-/root}/.local/bin}"
