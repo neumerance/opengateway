@@ -139,49 +139,43 @@ if [[ ! -f "$OPENGATEWAY_POC_ROOT/state.json" ]]; then
   echo '{"clusters":[],"nodePid":null}' > "$OPENGATEWAY_POC_ROOT/state.json"
 fi
 
-# Install CLI to machine bin path and add to PATH
-# Use explicit default for root / non-interactive (curl|bash may have unset HOME)
-BIN_DIR="${OPENGATEWAY_BIN_DIR:-${HOME:-/root}/.local/bin}"
-mkdir -p "$BIN_DIR" || {
-  echo "  WARN: could not create $BIN_DIR; CLI remains at $OPENGATEWAY_POC_ROOT/opengateway"
-  echo "  Run: export PATH=\"$OPENGATEWAY_POC_ROOT:\$PATH\"  and use opengateway from there."
-  BIN_DIR=""
-}
-[[ -z "$BIN_DIR" ]] || {
-cat > "$BIN_DIR/opengateway" << BINWRAP
-#!/usr/bin/env bash
-export OPENGATEWAY_POC_ROOT="$OPENGATEWAY_POC_ROOT"
-exec node "$OPENGATEWAY_POC_ROOT/cli.js" "\$@"
-BINWRAP
-chmod +x "$BIN_DIR/opengateway"
-echo "  OK: CLI installed to $BIN_DIR/opengateway"
-
-# Add bin dir to PATH in shell config if not already present
+# Add POC root to PATH so "opengateway" works (curl-only install; no repo on node)
 add_path_to_shell() {
   local file="$1"
-  local line="export PATH=\"$BIN_DIR:\$PATH\""
+  local line="export PATH=\"$OPENGATEWAY_POC_ROOT:\$PATH\""
   [[ ! -f "$file" ]] && return
-  if grep -qF "$BIN_DIR" "$file" 2>/dev/null; then
+  if grep -qF "$OPENGATEWAY_POC_ROOT" "$file" 2>/dev/null; then
     return
   fi
   echo "" >> "$file"
   echo "# OpenGateway POC CLI" >> "$file"
   echo "$line" >> "$file"
-  echo "  Added $BIN_DIR to PATH in $file"
+  echo "  Added POC root to PATH in $file"
 }
-# Ensure at least .profile exists so PATH is set for next login
 PROFILE_HOME="${HOME:-/root}"
 [[ ! -f "$PROFILE_HOME/.profile" ]] && touch "$PROFILE_HOME/.profile"
 add_path_to_shell "$PROFILE_HOME/.profile"
 add_path_to_shell "$PROFILE_HOME/.bashrc"
-if [[ -f "$PROFILE_HOME/.zshrc" ]]; then
-  add_path_to_shell "$PROFILE_HOME/.zshrc"
+[[ -f "$PROFILE_HOME/.zshrc" ]] && add_path_to_shell "$PROFILE_HOME/.zshrc"
+
+# Optional: also install wrapper into ~/.local/bin (fails silently if no write)
+BIN_DIR="${OPENGATEWAY_BIN_DIR:-${HOME:-/root}/.local/bin}"
+if mkdir -p "$BIN_DIR" 2>/dev/null; then
+  cat > "$BIN_DIR/opengateway" << BINWRAP
+#!/usr/bin/env bash
+export OPENGATEWAY_POC_ROOT="$OPENGATEWAY_POC_ROOT"
+exec node "$OPENGATEWAY_POC_ROOT/cli.js" "\$@"
+BINWRAP
+  chmod +x "$BIN_DIR/opengateway" 2>/dev/null && echo "  OK: CLI also in $BIN_DIR/opengateway"
+  if ! grep -qF "$BIN_DIR" "$PROFILE_HOME/.profile" 2>/dev/null; then
+    echo "export PATH=\"$BIN_DIR:\$PATH\"" >> "$PROFILE_HOME/.profile"
+  fi
 fi
+
 echo ""
-echo "  For this shell, run:  export PATH=\"$BIN_DIR:\$PATH\""
+echo "  For this shell, run:  export PATH=\"$OPENGATEWAY_POC_ROOT:\$PATH\""
 echo "  Then: opengateway status"
-echo "  (Or open a new login shell so PATH is loaded from .profile)"
-}
+echo "  (Or open a new login shell; PATH is set in .profile)"
 
 # --- Phase 3: Gauge and join (poc-node) ---
 echo ""
