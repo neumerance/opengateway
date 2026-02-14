@@ -14,11 +14,20 @@ const CONFIG_PATH = path.join(POC_ROOT, 'config.json');
 const STATE_PATH = path.join(POC_ROOT, 'state.json');
 const RESOURCES_PATH = path.join(POC_ROOT, 'resources.json');
 
+// Resource tiers: real LLM model classes. Machine must meet min CPU, RAM, GPU VRAM (GB), disk (GB).
 const TIERS = [
-  { id: 'Model A', cpu: 4, ram: 8, gpu: 0, disk: 20 },
-  { id: 'Model B', cpu: 4, ram: 12, gpu: 8, disk: 30 },
-  { id: 'Model C', cpu: 8, ram: 32, gpu: 24, disk: 150 },
-  { id: 'Model D', cpu: 16, ram: 64, gpu: 48, disk: 500 },
+  // Nano/small: 1–2 CPU, 1–4 GB RAM (no GPU)
+  { id: 'SmolLM-360M', cpu: 1, ram: 1, gpu: 0, disk: 2 },   // 1C/1G
+  { id: 'Qwen2-0.5B', cpu: 1, ram: 2, gpu: 0, disk: 3 },   // 1C/2G
+  { id: 'SmolLM-1.7B', cpu: 1, ram: 4, gpu: 0, disk: 5 },  // 1C/4G
+  { id: 'TinyLlama-1.1B', cpu: 2, ram: 1, gpu: 0, disk: 2 }, // 2C/1G
+  { id: 'Phi-2-2.7B', cpu: 2, ram: 2, gpu: 0, disk: 3 },   // 2C/2G (quantized)
+  { id: 'Llama-3.2-1.5B', cpu: 2, ram: 4, gpu: 0, disk: 5 },  // 2C/4G
+  // Larger tiers
+  { id: 'Llama-3.2-3B', cpu: 4, ram: 8, gpu: 0, disk: 20 },
+  { id: 'Llama-3.1-8B', cpu: 4, ram: 12, gpu: 8, disk: 30 },
+  { id: 'Llama-3.1-70B', cpu: 8, ram: 32, gpu: 24, disk: 150 },
+  { id: 'Llama-3.1-405B', cpu: 16, ram: 64, gpu: 48, disk: 500 },
 ];
 
 function readJson(p, def = null) {

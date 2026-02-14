@@ -15,7 +15,7 @@ Rough implementation to validate the core flow: **nodes join a cluster**, **disc
 | **Dependencies** — EXO, Python, Node, Hyperswarm, curl (machine can install EXO and be discovered) | [Dependencies](#dependencies-to-build-the-poc-exo--discovery--join-cluster) |
 | **Install flow** — Install deps → Install CLI → Gauge resources → Determine clusters → Join cluster | [Install flow](#install-flow-what-installsh-does) |
 | **CLI (minimum)** — status, clusters, connect, disconnect, resources, eligible, peers | [CLI (minimum)](#cli-minimum) |
-| **Resource tiers** — Model A/B/C/D thresholds for “which clusters this machine can join” | [Resource tiers](#resource-tiers-for-cluster-eligibility-poc) |
+| **Resource tiers** — LLM model tiers (e.g. Llama-3.2-3B … 405B) for “which clusters this machine can join” | [Resource tiers](#resource-tiers-for-cluster-eligibility-poc) |
 | **Scope** — 3 nodes, 1 cluster, 1 prompt/response; no tokens, regions, or tiers | This doc, [POC Scope](#poc-scope) |
 | **Scenario** — NodeA → NodeB → NodeC + prompt flow and success criteria | [Scenario](#scenario-three-nodes-one-cluster-one-prompt), [Success Criteria](#success-criteria-poc) |
 | **Execution plan** — Phases 1–5 with tasks/subtasks and checkboxes | [Execution Guidelines](#execution-guidelines) |
@@ -209,7 +209,7 @@ The script runs in order:
    Detect CPU (cores), RAM, GPU (VRAM if present), and disk. Persist a small resource profile (e.g. under `~/.opengateway-poc` or install root) so the next step and the node can use it. **Linux only for now** (e.g. /proc, nvidia-smi, df).
 
 4. **Determine which clusters this machine can join**  
-   Using the resource profile and cluster tier rules (see [Resource tiers](#resource-tiers-for-cluster-eligibility-poc)), compute which clusters this machine qualifies for (e.g. Model A only, or A+B, etc.). For POC, a single cluster ID (e.g. `gatewayai-poc`) is enough; tier logic can still be implemented for “which clusters” in the CLI.
+   Using the resource profile and cluster tier rules (see [Resource tiers](#resource-tiers-for-cluster-eligibility-poc)), compute which clusters this machine qualifies for (e.g. Llama-3.2-3B only, or multiple tiers). For POC, a single cluster ID (e.g. `gatewayai-poc`) is enough; tier logic can still be implemented for “which clusters” in the CLI.
 
 5. **Join the cluster**  
    Using EXO (and/or Hyperswarm for discovery), join the chosen cluster(s) so the machine is discoverable and can participate (e.g. serve or send prompts). For POC this can be “join one cluster by ID”; later, “join all clusters this machine qualifies for”.
@@ -238,12 +238,18 @@ Optional for POC: **join** / **leave** as aliases for connect / disconnect; **pr
 
 Used by “gauge resources” and “determine which clusters this machine can join”. Based on [ARCHITECT.md](ARCHITECT.md) §2.2; POC can use a single cluster first, then add tier logic.
 
-| Cluster | CPU | RAM | GPU VRAM | Disk |
-|---------|-----|-----|----------|------|
-| **Model A** | 4+ cores | 8GB+ | Optional | 20GB+ |
-| **Model B** | 4+ cores | 12GB+ | 8GB+ | 30GB+ |
-| **Model C** | 8+ cores | 32GB+ | 24GB+ | 150GB+ |
-| **Model D** | 16+ cores | 64GB+ | 48GB+ | 500GB+ |
+| Cluster (LLM tier) | CPU | RAM | GPU VRAM | Disk |
+|--------------------|-----|-----|----------|------|
+| **SmolLM-360M** | 1+ core | 1GB+ | Optional | 2GB+ |
+| **Qwen2-0.5B** | 1+ core | 2GB+ | Optional | 3GB+ |
+| **SmolLM-1.7B** | 1+ core | 4GB+ | Optional | 5GB+ |
+| **TinyLlama-1.1B** | 2+ cores | 1GB+ | Optional | 2GB+ |
+| **Phi-2-2.7B** | 2+ cores | 2GB+ | Optional | 3GB+ |
+| **Llama-3.2-1.5B** | 2+ cores | 4GB+ | Optional | 5GB+ |
+| **Llama-3.2-3B** | 4+ cores | 8GB+ | Optional | 20GB+ |
+| **Llama-3.1-8B** | 4+ cores | 12GB+ | 8GB+ | 30GB+ |
+| **Llama-3.1-70B** | 8+ cores | 32GB+ | 24GB+ | 150GB+ |
+| **Llama-3.1-405B** | 16+ cores | 64GB+ | 48GB+ | 500GB+ |
 
 The gauge step fills CPU, RAM, GPU VRAM, disk; “eligible” is the set of clusters whose row the machine satisfies.
 
