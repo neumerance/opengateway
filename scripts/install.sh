@@ -138,9 +138,38 @@ chmod +x "$OPENGATEWAY_POC_ROOT/opengateway"
 if [[ ! -f "$OPENGATEWAY_POC_ROOT/state.json" ]]; then
   echo '{"clusters":[],"nodePid":null}' > "$OPENGATEWAY_POC_ROOT/state.json"
 fi
-echo "  OK: CLI at $OPENGATEWAY_POC_ROOT/opengateway"
-echo "  Run: $OPENGATEWAY_POC_ROOT/opengateway status"
-echo "  Or add to PATH: export PATH=\"\$PATH:$OPENGATEWAY_POC_ROOT\""
+
+# Install CLI to machine bin path and add to PATH
+BIN_DIR="${OPENGATEWAY_BIN_DIR:-$HOME/.local/bin}"
+mkdir -p "$BIN_DIR"
+cat > "$BIN_DIR/opengateway" << BINWRAP
+#!/usr/bin/env bash
+export OPENGATEWAY_POC_ROOT="$OPENGATEWAY_POC_ROOT"
+exec node "$OPENGATEWAY_POC_ROOT/cli.js" "\$@"
+BINWRAP
+chmod +x "$BIN_DIR/opengateway"
+echo "  OK: CLI installed to $BIN_DIR/opengateway"
+
+# Add bin dir to PATH in shell config if not already present
+add_path_to_shell() {
+  local file="$1"
+  local line="export PATH=\"$BIN_DIR:\$PATH\""
+  [[ ! -f "$file" ]] && return
+  if grep -qF "$BIN_DIR" "$file" 2>/dev/null; then
+    return
+  fi
+  echo "" >> "$file"
+  echo "# OpenGateway POC CLI" >> "$file"
+  echo "$line" >> "$file"
+  echo "  Added $BIN_DIR to PATH in $file"
+}
+add_path_to_shell "$HOME/.profile"
+add_path_to_shell "$HOME/.bashrc"
+if [[ -n "${ZSH_VERSION:-}" ]] || [[ -f "$HOME/.zshrc" ]]; then
+  add_path_to_shell "$HOME/.zshrc"
+fi
+export PATH="$BIN_DIR:$PATH"
+echo "  Run: opengateway status   (or open a new shell if opengateway not found)"
 
 # --- Phase 3: Gauge and join (poc-node) ---
 echo ""
